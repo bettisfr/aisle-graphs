@@ -1,0 +1,12 @@
+.idea/
+
+build/
+build-*/
+cmake-build-*/
+
+test/output/
+
+_old/output/
+
+*.pyc
+__pycache__/
