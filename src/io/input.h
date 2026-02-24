@@ -13,9 +13,10 @@ struct input {
 
     // 0 -> ofr
     // 1 -> gfr
-    // 2 -> hprgc
-    // 3 -> oprsc
-    // 4 -> gprsc
+    // 2 -> hpr
+    // 3 -> apr
+    // 4 -> oprsc
+    // 5 -> gprsc
     int algorithm = 0;
     int budget = 0;
 
@@ -28,7 +29,7 @@ struct input {
     int rows = 10;
     int cols = 20;
     int seed = 0;
-    int min_reward = 0;
+    int min_reward = 1;
     int max_reward = 10;
 
     int run_batch = 0;

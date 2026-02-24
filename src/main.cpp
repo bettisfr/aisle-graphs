@@ -71,6 +71,21 @@ int main(const int argc, char **argv) {
             return -1;
         }
 
+        auto print_reward_grid = [&](const deployment &instance) {
+            cout << "grid_rows=" << instance.rows() << "\n";
+            cout << "grid_cols=" << instance.cols() << "\n";
+            for (const auto &row : instance.rewards()) {
+                cout << "grid_row=";
+                for (size_t j = 0; j < row.size(); ++j) {
+                    if (j > 0) {
+                        cout << ",";
+                    }
+                    cout << row[j];
+                }
+                cout << "\n";
+            }
+        };
+
         algorithms alg(dep);
 
         if (cfg.run_batch == 1) {
@@ -91,13 +106,15 @@ int main(const int argc, char **argv) {
         auto t1 = high_resolution_clock::now();
         sol.running_time_sec = static_cast<double>(duration_cast<microseconds>(t1 - t0).count()) / 1e6;
 
+        print_reward_grid(dep);
+
         if (cfg.algorithm == 0 || cfg.algorithm == 1) {
             string reason;
             const bool ok = util::is_full_row_solution_feasible(sol, dep.rows(), dep.cols(), cfg.budget, &reason);
             cout << "full_row_feasible=" << (ok ? 1 : 0) << "\n";
             cout << "full_row_reason=" << reason << "\n";
         }
-        if (cfg.algorithm == 3 || cfg.algorithm == 4) {
+        if (cfg.algorithm == 4 || cfg.algorithm == 5) {
             string reason;
             const bool ok = util::is_partial_row_single_column_solution_feasible(
                 sol, dep.rows(), dep.cols(), cfg.budget, &reason

@@ -35,6 +35,7 @@ def run_cpp_alg(alg_name: str, budget: int, rows: int = None, cols: int = None, 
     reward = None
     cost = None
     cycle = []
+    grid = []
     partial_row_feasible = None
     partial_row_reason = ""
     for line in proc.stdout.splitlines():
@@ -54,6 +55,9 @@ def run_cpp_alg(alg_name: str, budget: int, rows: int = None, cols: int = None, 
                         continue
                     r_str, c_str = token.split(":")
                     cycle.append((int(r_str), int(c_str)))
+        elif line.startswith("grid_row="):
+            raw = line.split("=", 1)[1].strip()
+            grid.append([float(x) for x in raw.split(",") if x != ""])
     if reward is None or cost is None:
         raise RuntimeError(f"Cannot parse {alg_name} output.\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}")
 
@@ -61,6 +65,7 @@ def run_cpp_alg(alg_name: str, budget: int, rows: int = None, cols: int = None, 
         "reward": reward,
         "cost": cost,
         "cycle": cycle,
+        "grid": grid,
         "partial_row_feasible": partial_row_feasible,
         "partial_row_reason": partial_row_reason,
     }
@@ -117,8 +122,8 @@ def parse_args():
     p = argparse.ArgumentParser(description="Plot OPRSC vs GPRSC paths on one aisle-grid instance (internal columns only).")
     p.add_argument("--budget", type=int, required=True, help="Travel budget B")
     p.add_argument("--input-csv", type=str, default="", help="CSV with m x n internal rewards")
-    p.add_argument("--rows", type=int, default=6, help="Rows m (used if --input-csv is omitted)")
-    p.add_argument("--cols", type=int, default=8, help="Internal columns n (used if --input-csv is omitted)")
+    p.add_argument("--rows", type=int, default=10, help="Rows m (used if --input-csv is omitted)")
+    p.add_argument("--cols", type=int, default=10, help="Internal columns n (used if --input-csv is omitted)")
     p.add_argument("--seed", type=int, default=0, help="Random seed (used if --input-csv is omitted)")
     p.add_argument("--out", type=str, default="test/output/plot_oprsc_gprsc.pdf", help="Output figure path (e.g., .pdf, .png)")
     return p.parse_args()
@@ -128,27 +133,23 @@ def main() -> int:
     args = parse_args()
 
     if args.input_csv:
-        with open(args.input_csv, "r", newline="") as f:
-            grid = [[float(x) for x in row] for row in csv.reader(f) if row]
-    else:
-        rng = np.random.default_rng(args.seed)
-        grid = rng.integers(0, 11, size=(args.rows, args.cols)).astype(float).tolist()
-
-    if not grid or not grid[0]:
-        raise ValueError("Empty grid")
-
-    m = len(grid)
-    n = len(grid[0])
-    if any(len(row) != n for row in grid):
-        raise ValueError("Grid must be rectangular")
-
-    if args.input_csv:
         input_csv = Path(args.input_csv)
         oprsc_cpp = run_cpp_alg("oprsc", args.budget, input_csv_path=input_csv)
         gprsc_cpp = run_cpp_alg("gprsc", args.budget, input_csv_path=input_csv)
     else:
         oprsc_cpp = run_cpp_alg("oprsc", args.budget, rows=args.rows, cols=args.cols, seed=args.seed)
         gprsc_cpp = run_cpp_alg("gprsc", args.budget, rows=args.rows, cols=args.cols, seed=args.seed)
+
+    grid = oprsc_cpp.get("grid", [])
+    if not grid:
+        raise RuntimeError("Cannot parse grid from C++ output")
+    if gprsc_cpp.get("grid") and gprsc_cpp["grid"] != grid:
+        raise RuntimeError("C++ returned different random grids across OPRSC/GPRSC calls")
+
+    m = len(grid)
+    n = len(grid[0]) if m > 0 else 0
+    if m == 0 or n == 0 or any(len(row) != n for row in grid):
+        raise ValueError("Grid must be rectangular")
 
     if oprsc_cpp["cost"] > args.budget + 1e-9:
         raise RuntimeError(f"OPRSC infeasible: cost={oprsc_cpp['cost']} > budget={args.budget}")

@@ -162,6 +162,7 @@ bool util::is_partial_row_single_column_solution_feasible(const solution &sol, c
     }
 
     const int left_corridor = 0;
+    const int right_corridor = internal_cols + 1;
     const int graph_cols = internal_cols + 2;
 
     if (sol.cost > static_cast<double>(budget) + 1e-9) {
@@ -178,6 +179,8 @@ bool util::is_partial_row_single_column_solution_feasible(const solution &sol, c
     if (sol.cycle.front() != make_pair(0, left_corridor) || sol.cycle.back() != make_pair(0, left_corridor)) {
         return fail("Cycle must start/end at depot (0,0)");
     }
+
+    int active_side_corridor = -1;
 
     for (size_t i = 0; i < sol.cycle.size(); ++i) {
         const auto [r, c] = sol.cycle[i];
@@ -204,15 +207,34 @@ bool util::is_partial_row_single_column_solution_feasible(const solution &sol, c
         }
 
         if (dr > 0) {
-            if (!(c == left_corridor && c2 == left_corridor)) {
-                return fail("Vertical move is not on the left corridor");
+            if (c != c2) {
+                return fail("Vertical move changes column");
+            }
+            if (c != left_corridor && c != right_corridor) {
+                return fail("Vertical move is not on an external corridor");
             }
         } else { // horizontal
-            if (!(c == left_corridor || c2 == left_corridor)) {
-                return fail("Horizontal move does not touch the left corridor");
+            const bool touches_left = (c == left_corridor || c2 == left_corridor);
+            const bool touches_right = (c == right_corridor || c2 == right_corridor);
+            if (!touches_left && !touches_right) {
+                return fail("Horizontal move does not touch an external corridor");
             }
-            if (c != left_corridor && c2 != left_corridor) {
-                return fail("Horizontal move is not a left-corridor out-and-back segment");
+
+            // Infer the active side corridor from the first non-top-row partial excursion.
+            if (r > 0 && active_side_corridor == -1) {
+                if (touches_left) {
+                    active_side_corridor = left_corridor;
+                } else if (touches_right) {
+                    active_side_corridor = right_corridor;
+                }
+            }
+
+            // On rows below the top row, partial-row excursions must use a single side corridor.
+            if (r > 0 && active_side_corridor != -1) {
+                const bool touches_active = (c == active_side_corridor || c2 == active_side_corridor);
+                if (!touches_active) {
+                    return fail("Horizontal move uses the wrong side corridor for single-column partial policy");
+                }
             }
         }
     }
