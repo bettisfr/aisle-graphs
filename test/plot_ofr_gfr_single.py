@@ -38,11 +38,17 @@ def run_cpp_alg(alg_name: str, input_csv_path: Path, budget: int):
     reward = None
     cost = None
     cycle = []
+    full_row_feasible = None
+    full_row_reason = ""
     for line in proc.stdout.splitlines():
         if line.startswith("reward="):
             reward = float(line.split("=", 1)[1].strip())
         elif line.startswith("cost="):
             cost = float(line.split("=", 1)[1].strip())
+        elif line.startswith("full_row_feasible="):
+            full_row_feasible = int(line.split("=", 1)[1].strip())
+        elif line.startswith("full_row_reason="):
+            full_row_reason = line.split("=", 1)[1].strip()
         elif line.startswith("cycle_list="):
             raw = line.split("=", 1)[1].strip()
             if raw:
@@ -54,7 +60,13 @@ def run_cpp_alg(alg_name: str, input_csv_path: Path, budget: int):
     if reward is None or cost is None:
         raise RuntimeError(f"Cannot parse {alg_name} output.\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}")
 
-    return {"reward": reward, "cost": cost, "cycle": cycle}
+    return {
+        "reward": reward,
+        "cost": cost,
+        "cycle": cycle,
+        "full_row_feasible": full_row_feasible,
+        "full_row_reason": full_row_reason,
+    }
 
 
 def build_random_grid(rows: int, cols: int, seed: int, min_reward: int = 0, max_reward: int = 10):
@@ -126,7 +138,7 @@ def greedy_full_row_reference_with_path(grid, budget: int):
     return out
 
 
-def draw_instance_with_path(ax, grid, cycle, title, reward_value, cost_value):
+def draw_instance_with_path(ax, grid, cycle, title, reward_value, cost_value, full_row_feasible=None, full_row_reason=""):
     internal = np.array(grid, dtype=float)
     m, n = internal.shape
 
@@ -155,7 +167,15 @@ def draw_instance_with_path(ax, grid, cycle, title, reward_value, cost_value):
         ax.plot(xs, ys, color="#f4a6a6", linewidth=2.6, marker="o", markersize=3.8, alpha=0.95)
         ax.scatter([xs[0]], [ys[0]], color="#1f77b4", s=45, zorder=5, label="start")
 
-    ax.set_title(f"{title}\nreward={reward_value:.2f}, cost={cost_value:.2f}", fontsize=10)
+    status = ""
+    if full_row_feasible is not None:
+        status = "OK" if int(full_row_feasible) == 1 else "KO"
+        if full_row_reason:
+            status += f" ({full_row_reason})"
+    title_lines = [f"{title}", f"reward={reward_value:.2f}, cost={cost_value:.2f}"]
+    if status:
+        title_lines.append(status)
+    ax.set_title("\n".join(title_lines), fontsize=10, color=("#1b7f3b" if status.startswith("OK") else ("#b42318" if status else "black")))
     ax.set_xlabel("graph column (0..n+1)")
     ax.set_ylabel("row i")
     ax.set_xticks(range(n + 2))
@@ -218,8 +238,14 @@ def main() -> int:
         fontsize=12,
     )
 
-    draw_instance_with_path(axes[0], grid, ofr_cpp["cycle"], "OFR", float(ofr_cpp["reward"]), float(ofr_cpp["cost"]))
-    draw_instance_with_path(axes[1], grid, gfr_cpp["cycle"], "GFR", float(gfr_cpp["reward"]), float(gfr_cpp["cost"]))
+    draw_instance_with_path(
+        axes[0], grid, ofr_cpp["cycle"], "OFR", float(ofr_cpp["reward"]), float(ofr_cpp["cost"]),
+        ofr_cpp.get("full_row_feasible"), ofr_cpp.get("full_row_reason", "")
+    )
+    draw_instance_with_path(
+        axes[1], grid, gfr_cpp["cycle"], "GFR", float(gfr_cpp["reward"]), float(gfr_cpp["cost"]),
+        gfr_cpp.get("full_row_feasible"), gfr_cpp.get("full_row_reason", "")
+    )
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)

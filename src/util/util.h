@@ -1,17 +1,23 @@
 #ifndef UTIL_H
 #define UTIL_H
 
-#include <vector>
 #include <iostream>
+#include <string>
+#include <vector>
+
+#include "../io/output.h"
 
 using namespace std;
 
 class util {
 
 public:
-    static double get_2D_distance(double, double, double, double);
+    static double compute_cycle_cost(const vector<pair<int, int>> &cycle);
+    static vector<pair<int, int>> build_full_row_cycle_from_selection(const vector<int> &selected_rows_0based,
+                                                                      int internal_cols);
 
-    static double get_3D_distance(double, double, double, double, double, double);
+    static bool is_full_row_solution_feasible(const solution &, int rows, int internal_cols, int budget,
+                                              string *reason = nullptr);
 
     template<typename T>
     static pair<double, double> calculate_avg_std(const vector<T> &values) {

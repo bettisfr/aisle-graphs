@@ -4,65 +4,17 @@
 #include <cmath>
 #include <stdexcept>
 
+#include "../util/util.h"
+
 using namespace std;
-
-namespace {
-
-double compute_cost_from_cycle(const vector<pair<int, int>> &cycle) {
-    if (cycle.empty()) {
-        return 0.0;
-    }
-
-    long long total = 0;
-    for (size_t i = 0; i + 1 < cycle.size(); ++i) {
-        const auto [r1, c1] = cycle[i];
-        const auto [r2, c2] = cycle[i + 1];
-        total += llabs(static_cast<long long>(r2) - static_cast<long long>(r1));
-        total += llabs(static_cast<long long>(c2) - static_cast<long long>(c1));
-    }
-    return static_cast<double>(total);
-}
-
-vector<pair<int, int>> build_full_row_cycle_from_selection(const vector<int> &selected_rows_0based,
-                                                           const int n_internal) {
-    vector<pair<int, int>> cycle;
-    if (n_internal <= 0) {
-        return cycle;
-    }
-
-    const int left_corridor = 0;
-    const int right_corridor = n_internal + 1;
-    int side_col = left_corridor;
-
-    cycle.push_back({0, side_col});
-    for (const int row : selected_rows_0based) {
-        cycle.push_back({row, side_col});
-        side_col = (side_col == left_corridor) ? right_corridor : left_corridor;
-        cycle.push_back({row, side_col});
-    }
-    cycle.push_back({0, side_col});
-    cycle.push_back({0, left_corridor});
-
-    vector<pair<int, int>> cleaned;
-    cleaned.reserve(cycle.size());
-    for (const auto &p : cycle) {
-        if (cleaned.empty() || cleaned.back() != p) {
-            cleaned.push_back(p);
-        }
-    }
-    return cleaned;
-}
-
-} // namespace
 
 algorithms::algorithms(const deployment &dep) : dep(dep) {
     algorithm_functions = {
-        &algorithms::opt_full_row,                          // 0 -> ofr
-        &algorithms::opt_partial_row_single_column,         // 1 -> oprsc
-        &algorithms::opt_partial_row_single_column_novertical, // 2 -> oprsc-nv
-        &algorithms::heuristic_partial_row,                 // 3 -> hprgc
-        &algorithms::greedy_full_row,                       // 4 -> gfr
-        &algorithms::greedy_partial_row_single_column,      // 5 -> gprsc
+        &algorithms::opt_full_row,                  // 0 -> ofr
+        &algorithms::greedy_full_row,               // 1 -> gfr
+        &algorithms::heuristic_partial_row,         // 2 -> hprgc
+        &algorithms::opt_partial_row_single_column, // 3 -> oprsc
+        &algorithms::greedy_partial_row_single_column, // 4 -> gprsc
     };
 }
 
@@ -80,6 +32,14 @@ solution algorithms::run_experiment(const int algorithm, const int budget) {
             "Infeasible solution: algorithm cost=" + to_string(out.cost) +
             " exceeds budget=" + to_string(budget)
         );
+    }
+
+    // Validate full-row solutions structurally (path/layout/cost consistency).
+    if (algorithm == 0 || algorithm == 1) { // ofr, gfr
+        string reason;
+        if (!util::is_full_row_solution_feasible(out, dep.rows(), dep.cols(), budget, &reason)) {
+            throw runtime_error("Invalid full-row solution: " + reason);
+        }
     }
 
     return out;
@@ -181,8 +141,8 @@ solution algorithms::opt_full_row(const int budget) const {
 
     out.reward = best_reward;
     out.traversed_rows = best_rows;
-    out.cycle = build_full_row_cycle_from_selection(out.traversed_rows, n);
-    out.cost = compute_cost_from_cycle(out.cycle);
+    out.cycle = util::build_full_row_cycle_from_selection(out.traversed_rows, n);
+    out.cost = util::compute_cycle_cost(out.cycle);
     return out;
 }
 
@@ -248,8 +208,8 @@ solution algorithms::greedy_full_row(const int budget) const {
         candidate_rows_0based.push_back(row_id - 1);
 
         const vector<pair<int, int>> candidate_cycle =
-            build_full_row_cycle_from_selection(candidate_rows_0based, n);
-        const double candidate_cost = compute_cost_from_cycle(candidate_cycle);
+            util::build_full_row_cycle_from_selection(candidate_rows_0based, n);
+        const double candidate_cost = util::compute_cycle_cost(candidate_cycle);
 
         if (candidate_cost <= static_cast<double>(budget)) {
             selected_rows_1based.push_back(row_id);
@@ -263,8 +223,8 @@ solution algorithms::greedy_full_row(const int budget) const {
         out.traversed_rows.push_back(row_id - 1);
     }
 
-    out.cycle = build_full_row_cycle_from_selection(out.traversed_rows, n);
-    out.cost = compute_cost_from_cycle(out.cycle);
+    out.cycle = util::build_full_row_cycle_from_selection(out.traversed_rows, n);
+    out.cost = util::compute_cycle_cost(out.cycle);
 
     return out;
 }

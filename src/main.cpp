@@ -7,6 +7,7 @@
 #include "core/deployment.h"
 #include "io/input.h"
 #include "io/output.h"
+#include "util/util.h"
 
 using namespace std;
 using namespace chrono;
@@ -89,6 +90,13 @@ int main(const int argc, char **argv) {
         solution sol = alg.run_experiment(cfg.algorithm, cfg.budget);
         auto t1 = high_resolution_clock::now();
         sol.running_time_sec = static_cast<double>(duration_cast<microseconds>(t1 - t0).count()) / 1e6;
+
+        if (cfg.algorithm == 0 || cfg.algorithm == 1) {
+            string reason;
+            const bool ok = util::is_full_row_solution_feasible(sol, dep.rows(), dep.cols(), cfg.budget, &reason);
+            cout << "full_row_feasible=" << (ok ? 1 : 0) << "\n";
+            cout << "full_row_reason=" << reason << "\n";
+        }
 
         print_solution_summary(sol);
     } catch (const exception &e) {
