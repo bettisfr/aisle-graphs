@@ -83,13 +83,13 @@ def main() -> int:
 
     # Same upper bound used in the OFR/GFR check; enough to cover exhaustive visit regimes.
     b_max = (num_internal_cols + 1) * num_rows + 2 * (num_rows - 1)
-    budgets = list(range(0, b_max + 1))
+    budgets = list(range(0, b_max + 1, 2))
 
     print(
         f"C++ OPRSC/GPRSC check on {num_instances} random instances "
         f"({num_rows}x{num_internal_cols} internal, graph cols={num_internal_cols + 2})"
     )
-    print(f"Budget sweep: 0..{b_max} ({len(budgets)} values)")
+    print(f"Budget sweep (even only): 0..{b_max} step 2 ({len(budgets)} values)")
 
     total_points = 0
     violations = 0

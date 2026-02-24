@@ -12,9 +12,7 @@
 using namespace std;
 using namespace chrono;
 
-namespace {
-
-deployment build_instance(const input &cfg) {
+static deployment build_instance(const input &cfg) {
     if (!cfg.input_csv_path.empty()) {
         RewardGrid grid = load_reward_grid_csv(cfg.input_csv_path);
         return deployment::from_rewards(cfg.input_csv_path, grid);
@@ -29,7 +27,7 @@ deployment build_instance(const input &cfg) {
     return deployment::random_grid(params);
 }
 
-experiment_series run_batch_experiment(algorithms &alg, const deployment &dep, const input &cfg) {
+static experiment_series run_batch_experiment(algorithms &alg, const deployment &dep, const input &cfg) {
     experiment_series series;
     series.algorithm_key = algorithm_to_string(cfg.algorithm);
     series.instance_label = dep.label();
@@ -49,8 +47,6 @@ experiment_series run_batch_experiment(algorithms &alg, const deployment &dep, c
 
     return series;
 }
-
-} // namespace
 
 int main(const int argc, char **argv) {
     cout << fixed << setprecision(2);

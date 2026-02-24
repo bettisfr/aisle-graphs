@@ -12,7 +12,7 @@ using namespace std;
 class util {
 
 public:
-    static double compute_cycle_cost(const vector<pair<int, int>> &cycle);
+    static int compute_cycle_cost(const vector<pair<int, int>> &cycle);
     static vector<pair<int, int>> build_full_row_cycle_from_selection(const vector<int> &selected_rows_0based,
                                                                       int internal_cols);
 

@@ -8,10 +8,8 @@
 
 using namespace std;
 
-namespace {
-
-solution solve_oprsc_left_on_grid(const RewardGrid &rewards, const int budget, const string &algorithm_key,
-                                  const bool disable_first_row_partial) {
+solution algorithms::solve_oprsc_left_on_grid(const RewardGrid &rewards, const int budget, const string &algorithm_key,
+                                              const bool disable_first_row_partial) const {
     solution out;
     out.algorithm_key = algorithm_key;
 
@@ -22,7 +20,7 @@ solution solve_oprsc_left_on_grid(const RewardGrid &rewards, const int budget, c
         return out;
     }
 
-    vector<vector<double>> pref(num_rows, vector<double>(num_internal_cols + 1, 0.0));
+    vector<vector<int>> pref(num_rows, vector<int>(num_internal_cols + 1, 0));
     for (int i = 0; i < num_rows; ++i) {
         for (int c = 1; c <= num_internal_cols; ++c) {
             pref[i][c] = pref[i][c - 1] + rewards[i][c - 1];
@@ -35,13 +33,13 @@ solution solve_oprsc_left_on_grid(const RewardGrid &rewards, const int budget, c
         return out;
     }
 
-    const double NEG_INF = -1e100;
-    vector<vector<double>> R(num_rows, vector<double>(B2 + 1, NEG_INF));
+    const int NEG_INF = -1000000000;
+    vector<vector<int>> R(num_rows, vector<int>(B2 + 1, NEG_INF));
     vector<vector<int>> S(num_rows, vector<int>(B2 + 1, 0));
 
     for (int b = 0; b <= B2; ++b) {
         if (disable_first_row_partial) {
-            R[0][b] = 0.0;
+            R[0][b] = 0;
             S[0][b] = 0;
         } else {
             const int best_c = min(num_internal_cols, b);
@@ -58,12 +56,12 @@ solution solve_oprsc_left_on_grid(const RewardGrid &rewards, const int budget, c
                 continue;
             }
             if (b == i) {
-                R[i][b] = 0.0;
+                R[i][b] = 0;
                 S[i][b] = 0;
                 continue;
             }
 
-            double best_val = NEG_INF;
+            int best_val = NEG_INF;
             int best_c = 0;
             for (int c = 0; c <= num_internal_cols; ++c) {
                 const int idx = b - c - 1;
@@ -73,11 +71,11 @@ solution solve_oprsc_left_on_grid(const RewardGrid &rewards, const int budget, c
                 if (R[i - 1][idx] <= NEG_INF / 2) {
                     continue;
                 }
-                const double cand = R[i - 1][idx] + pref[i][c];
-                if (cand > best_val + 1e-12) {
+                const int cand = R[i - 1][idx] + pref[i][c];
+                if (cand > best_val) {
                     best_val = cand;
                     best_c = c;
-                } else if (fabs(cand - best_val) <= 1e-12 && c < best_c) {
+                } else if (cand == best_val && c < best_c) {
                     // Prefer shorter partial traversal when reward is identical.
                     best_c = c;
                 }
@@ -88,7 +86,7 @@ solution solve_oprsc_left_on_grid(const RewardGrid &rewards, const int budget, c
     }
 
     int best_max_row = -1;
-    double best_reward = 0.0;
+    int best_reward = 0;
     for (int i = 0; i < num_rows; ++i) {
         if (R[i][B2] > best_reward) {
             best_reward = R[i][B2];
@@ -96,7 +94,7 @@ solution solve_oprsc_left_on_grid(const RewardGrid &rewards, const int budget, c
         }
     }
 
-    if (best_max_row < 0 || best_reward <= 0.0) {
+    if (best_max_row < 0 || best_reward <= 0) {
         out.cycle = {{0, 0}};
         return out;
     }
@@ -145,8 +143,6 @@ solution solve_oprsc_left_on_grid(const RewardGrid &rewards, const int budget, c
     return out;
 }
 
-} // namespace
-
 algorithms::algorithms(const deployment &dep) : dep(dep) {
     algorithm_functions = {
         &algorithms::opt_full_row,                  // 0 -> ofr
@@ -169,7 +165,7 @@ solution algorithms::run_experiment(const int algorithm, const int budget) {
         throw invalid_argument("Invalid algorithm index: " + to_string(algorithm));
     }
 
-    if (out.cost > static_cast<double>(budget) + 1e-9) {
+    if (out.cost > budget) {
         throw runtime_error(
             "Infeasible solution: algorithm cost=" + to_string(out.cost) +
             " exceeds budget=" + to_string(budget)
@@ -193,17 +189,6 @@ solution algorithms::run_experiment(const int algorithm, const int budget) {
     return out;
 }
 
-solution algorithms::make_todo_solution(const string &algorithm_key, const int budget, const string &note) const {
-    solution out;
-    out.algorithm_key = algorithm_key;
-    out.reward = 0.0;
-    out.cost = 0.0;
-    out.notes.push_back("TODO: " + note);
-    out.notes.push_back("Budget received=" + to_string(budget));
-    out.notes.push_back("Instance dims=" + to_string(dep.rows()) + "x" + to_string(dep.cols()));
-    return out;
-}
-
 solution algorithms::opt_full_row(const int budget) const {
     solution out;
     out.algorithm_key = "ofr";
@@ -221,15 +206,15 @@ solution algorithms::opt_full_row(const int budget) const {
     // Each full-row crossing on the full graph costs (n+1) edges (from corridor to corridor).
     const int row_cross_cost = num_internal_cols + 1;
 
-    vector<double> row_rewards(num_rows, 0.0);
+    vector<int> row_rewards(num_rows, 0);
     for (int i = 0; i < num_rows; ++i) {
         for (int j = 0; j < num_internal_cols; ++j) {
             row_rewards[i] += rewards[i][j];
         }
     }
 
-    double best_reward = 0.0;
-    double best_cost = 0.0;
+    int best_reward = 0;
+    int best_cost = 0;
     vector<int> best_rows;
 
     for (int max_row = 0; max_row < num_rows; ++max_row) {
@@ -252,10 +237,9 @@ solution algorithms::opt_full_row(const int budget) const {
             // Unified full-graph cost:
             // vertical down/up to deepest row + k row crossings + optional final top-row crossing if k is odd.
             const int crossings = k + (k % 2);
-            const double candidate_cost =
-                static_cast<double>(2 * max_row + crossings * row_cross_cost);
+            const int candidate_cost = 2 * max_row + crossings * row_cross_cost;
 
-            if (candidate_cost > static_cast<double>(budget)) {
+            if (candidate_cost > budget) {
                 continue;
             }
 
@@ -270,7 +254,7 @@ solution algorithms::opt_full_row(const int budget) const {
 
             sort(candidate_rows.begin(), candidate_rows.end());
 
-            double candidate_reward = 0.0;
+            int candidate_reward = 0;
             for (const int r : candidate_rows) {
                 candidate_reward += row_rewards[r];
             }
@@ -314,7 +298,7 @@ solution algorithms::opt_partial_row_single_column_right(const int budget) const
 
     // Suffix rewards by number of visited internal columns from the right:
     // suff[i][c] = reward collected on row i by visiting the last c internal columns, c in [0..n].
-    vector<vector<double>> suff(num_rows, vector<double>(num_internal_cols + 1, 0.0));
+    vector<vector<int>> suff(num_rows, vector<int>(num_internal_cols + 1, 0));
     for (int i = 0; i < num_rows; ++i) {
         for (int c = 1; c <= num_internal_cols; ++c) {
             suff[i][c] = suff[i][c - 1] + rewards[i][num_internal_cols - c];
@@ -327,8 +311,8 @@ solution algorithms::opt_partial_row_single_column_right(const int budget) const
         return out;
     }
 
-    const double NEG_INF = -1e100;
-    vector<vector<double>> R(num_rows, vector<double>(B2 + 1, NEG_INF));
+    const int NEG_INF = -1000000000;
+    vector<vector<int>> R(num_rows, vector<int>(B2 + 1, NEG_INF));
     vector<vector<int>> S(num_rows, vector<int>(B2 + 1, 0)); // chosen suffix length c in [0..n]
 
     for (int b = 0; b <= B2; ++b) {
@@ -346,12 +330,12 @@ solution algorithms::opt_partial_row_single_column_right(const int budget) const
             }
 
             if (b == i) {
-                R[i][b] = 0.0;
+                R[i][b] = 0;
                 S[i][b] = 0;
                 continue;
             }
 
-            double best_val = NEG_INF;
+            int best_val = NEG_INF;
             int best_c = 0;
             for (int c = 0; c <= num_internal_cols; ++c) {
                 const int idx = b - c - 1;
@@ -361,7 +345,7 @@ solution algorithms::opt_partial_row_single_column_right(const int budget) const
                 if (R[i - 1][idx] <= NEG_INF / 2) {
                     continue;
                 }
-                const double cand = R[i - 1][idx] + suff[i][c];
+                const int cand = R[i - 1][idx] + suff[i][c];
                 if (cand > best_val) {
                     best_val = cand;
                     best_c = c;
@@ -373,7 +357,7 @@ solution algorithms::opt_partial_row_single_column_right(const int budget) const
     }
 
     int best_max_row = -1;
-    double best_reward = 0.0;
+    int best_reward = 0;
     for (int i = 0; i < num_rows; ++i) {
         if (R[i][B2] > best_reward) {
             best_reward = R[i][B2];
@@ -381,7 +365,7 @@ solution algorithms::opt_partial_row_single_column_right(const int budget) const
         }
     }
 
-    if (best_max_row < 0 || best_reward <= 0.0) {
+    if (best_max_row < 0 || best_reward <= 0) {
         out.cycle = {{0, right_corridor}};
         return out;
     }
@@ -425,6 +409,18 @@ solution algorithms::opt_partial_row_single_column_right(const int budget) const
 }
 
 solution algorithms::heuristic_partial_row(const int budget) const {
+    return heuristic_partial_row_impl(budget, 0);
+}
+
+solution algorithms::heuristic_partial_row_s1(const int budget) const {
+    return heuristic_partial_row_impl(budget, 1);
+}
+
+solution algorithms::heuristic_partial_row_s3(const int budget) const {
+    return heuristic_partial_row_impl(budget, 2);
+}
+
+solution algorithms::heuristic_partial_row_impl(const int budget, const int component_mode) const {
     // Incremental paper-driven implementation:
     // - APX baseline = max(S_L, S_R, S_F)
     // - S1 (current implementation): OFR(B) + left OPRSC on residual budget over a filtered/zeroed matrix,
@@ -435,7 +431,7 @@ solution algorithms::heuristic_partial_row(const int budget) const {
     const RewardGrid &base_rewards = dep.rewards();
     const int num_rows = dep.rows();
     const int num_internal_cols = dep.cols();
-    int residual_budget = budget - static_cast<int>(llround(s1.cost));
+    int residual_budget = budget - s1.cost;
 
     RewardGrid residual_grid = base_rewards;
     int max_full_row = -1;
@@ -596,7 +592,7 @@ solution algorithms::heuristic_partial_row(const int budget) const {
     };
 
     auto augment_with_residual_partials = [&](solution base_full, const string &tag) -> solution {
-        int b_res = budget - static_cast<int>(llround(base_full.cost));
+        int b_res = budget - base_full.cost;
         if (b_res <= 0) {
             base_full.notes.push_back(tag + ": no residual budget");
             return base_full;
@@ -604,14 +600,14 @@ solution algorithms::heuristic_partial_row(const int budget) const {
 
         RewardGrid grid = build_residual_grid_after_full_rows(base_full.traversed_rows);
         solution left_residual = solve_oprsc_left_on_grid(grid, b_res, "hgc-left-residual", false);
-        b_res -= static_cast<int>(llround(left_residual.cost));
+        b_res -= left_residual.cost;
         base_full.reward += left_residual.reward;
         append_cycle_from_depot(base_full, left_residual);
         zero_rewards_collected_by_left_partial(grid, left_residual);
 
         if (b_res > 0) {
             solution right_residual = solve_right_rooted_on_grid(grid, b_res);
-            b_res -= static_cast<int>(llround(right_residual.cost));
+            b_res -= right_residual.cost;
             base_full.reward += right_residual.reward;
             append_cycle_from_depot(base_full, right_residual);
         }
@@ -622,16 +618,128 @@ solution algorithms::heuristic_partial_row(const int budget) const {
         return base_full;
     };
 
+    auto add_left_descent_detour = [&](solution &base_sol, RewardGrid &grid, int &b_res, const string &tag) {
+        if (b_res <= 1 || base_sol.cycle.size() < 2) {
+            return;
+        }
+        if (base_sol.cycle.back() != make_pair(0, 0)) {
+            return;
+        }
+        const auto attach = base_sol.cycle[base_sol.cycle.size() - 2];
+        const int k = attach.first;
+        const int attach_col = attach.second;
+        if (k < 0 || k >= num_rows || attach_col != 0) {
+            return; // currently implemented only for final return on left corridor
+        }
+
+        const int b2 = b_res / 2;
+        if (b2 <= 0) {
+            return;
+        }
+
+        vector<vector<double>> pref(k + 1, vector<double>(num_internal_cols + 1, 0.0));
+        for (int i = 0; i <= k; ++i) {
+            for (int c = 1; c <= num_internal_cols; ++c) {
+                pref[i][c] = pref[i][c - 1] + grid[i][c - 1];
+            }
+        }
+
+        // Multiple-choice knapsack on the final left-corridor descent:
+        // extra cost relative to the baseline return k->0 is exactly 2*c per row prefix.
+        const double NEG_INF = -1e100;
+        vector<vector<double>> dp(k + 2, vector<double>(b2 + 1, NEG_INF));
+        vector<vector<int>> take(k + 1, vector<int>(b2 + 1, 0));
+        dp[0][0] = 0.0;
+
+        for (int i = 0; i <= k; ++i) {
+            for (int used = 0; used <= b2; ++used) {
+                if (dp[i][used] <= NEG_INF / 2) {
+                    continue;
+                }
+                for (int c = 0; c <= num_internal_cols && used + c <= b2; ++c) {
+                    const double cand = dp[i][used] + pref[i][c];
+                    if (cand > dp[i + 1][used + c] + 1e-12) {
+                        dp[i + 1][used + c] = cand;
+                        take[i][used + c] = c;
+                    } else if (fabs(cand - dp[i + 1][used + c]) <= 1e-12 && c < take[i][used + c]) {
+                        take[i][used + c] = c;
+                    }
+                }
+            }
+        }
+
+        int best_used = 0;
+        double best_gain = 0.0;
+        for (int used = 0; used <= b2; ++used) {
+            if (dp[k + 1][used] > best_gain + 1e-12) {
+                best_gain = dp[k + 1][used];
+                best_used = used;
+            } else if (fabs(dp[k + 1][used] - best_gain) <= 1e-12 && used < best_used) {
+                best_used = used;
+            }
+        }
+        if (best_gain <= 1e-12) {
+            return;
+        }
+
+        vector<int> c_by_row(k + 1, 0);
+        int used = best_used;
+        for (int i = k; i >= 0; --i) {
+            int c = take[i][used];
+            c_by_row[i] = c;
+            used -= c;
+        }
+
+        // Trim useless zero tails to keep the detour tight.
+        for (int i = 0; i <= k; ++i) {
+            while (c_by_row[i] > 0 && fabs(grid[i][c_by_row[i] - 1]) <= 1e-12) {
+                c_by_row[i]--;
+            }
+        }
+
+        // Remove the final depot point, insert detours while descending on left corridor, then close at depot once.
+        base_sol.cycle.pop_back();
+        for (int i = k; i >= 0; --i) {
+            if (base_sol.cycle.back() != make_pair(i, 0)) {
+                base_sol.cycle.push_back({i, 0});
+            }
+            if (c_by_row[i] > 0) {
+                base_sol.cycle.push_back({i, c_by_row[i]});
+                base_sol.cycle.push_back({i, 0});
+                for (int j = 0; j < c_by_row[i]; ++j) {
+                    grid[i][j] = 0.0;
+                }
+            }
+        }
+        if (base_sol.cycle.back() != make_pair(0, 0)) {
+            base_sol.cycle.push_back({0, 0});
+        }
+
+        const int extra_cost = 2 * best_used;
+        b_res -= extra_cost;
+        base_sol.reward += best_gain;
+        base_sol.cost = util::compute_cycle_cost(base_sol.cycle);
+        base_sol.notes.push_back(tag + ": left descent detour gain=" + to_string(best_gain) +
+                                 ", extra_cost=" + to_string(extra_cost));
+    };
+
     if (residual_budget > 0) {
+        // First exploit the residual on the final OFR return along the left corridor (this avoids wasting slack).
+        add_left_descent_detour(s1, residual_grid, residual_budget, "S1");
+
         solution left_residual = solve_oprsc_left_on_grid(residual_grid, residual_budget, "s1-left-residual", false);
-        residual_budget -= static_cast<int>(llround(left_residual.cost));
+        s1.notes.push_back("S1 left rooted residual: reward=" + to_string(left_residual.reward) +
+                           ", cost=" + to_string(left_residual.cost));
+        residual_budget -= left_residual.cost;
         s1.reward += left_residual.reward;
         append_cycle_from_depot(s1, left_residual);
         zero_rewards_collected_by_left_partial(residual_grid, left_residual);
 
         if (residual_budget > 0) {
             solution right_residual = solve_right_rooted_on_grid(residual_grid, residual_budget);
-            residual_budget -= static_cast<int>(llround(right_residual.cost));
+            s1.notes.push_back("S1 right rooted residual: reward=" + to_string(right_residual.reward) +
+                               ", cost=" + to_string(right_residual.cost));
+            residual_budget -= right_residual.cost;
             s1.reward += right_residual.reward;
             append_cycle_from_depot(s1, right_residual);
             s1.notes.push_back("S1 added right residual phase");
@@ -651,8 +759,8 @@ solution algorithms::heuristic_partial_row(const int budget) const {
     solution s2 = s_left_budget;
     s2.algorithm_key = "hpr";
     s2.notes.push_back("S2 initialized with S_L");
-    if (s_right_budget.reward > s2.reward + 1e-9 ||
-        (fabs(s_right_budget.reward - s2.reward) <= 1e-9 && s_right_budget.cost < s2.cost - 1e-9)) {
+    if (s_right_budget.reward > s2.reward ||
+        (s_right_budget.reward == s2.reward && s_right_budget.cost < s2.cost)) {
         s2 = s_right_budget;
         s2.algorithm_key = "hpr";
         s2.notes.push_back("S2 selected S_R");
@@ -690,11 +798,11 @@ solution algorithms::heuristic_partial_row(const int budget) const {
         }
         if (!full_rows_candidate.empty()) {
             solution s_prime = build_full_solution_from_rows(full_rows_candidate, "S2 prime full rows");
-            if (s_prime.cost <= static_cast<double>(budget) + 1e-9) {
+            if (s_prime.cost <= budget) {
                 s_prime = augment_with_residual_partials(s_prime, "S2 prime + residual partials");
                 s_prime.algorithm_key = "hpr";
-                if (s_prime.reward > s2.reward + 1e-9 ||
-                    (fabs(s_prime.reward - s2.reward) <= 1e-9 && s_prime.cost < s2.cost - 1e-9)) {
+                if (s_prime.reward > s2.reward ||
+                    (s_prime.reward == s2.reward && s_prime.cost < s2.cost)) {
                     s2 = s_prime;
                     s2.notes.push_back("S2 selected S'");
                 }
@@ -722,16 +830,25 @@ solution algorithms::heuristic_partial_row(const int budget) const {
         }
         vector<int> chosen = {prefix_rows[0], prefix_rows[1]};
         solution cand = build_full_solution_from_rows(chosen, "S3 base (two best rows up to i)");
-        if (cand.cost > static_cast<double>(budget) + 1e-9) {
+        if (cand.cost > budget) {
             continue;
         }
         cand = augment_with_residual_partials(cand, "S3 + residual partials");
         cand.algorithm_key = "hpr";
-        if (cand.reward > s3.reward + 1e-9 ||
-            (fabs(cand.reward - s3.reward) <= 1e-9 && cand.cost < s3.cost - 1e-9)) {
+        if (cand.reward > s3.reward ||
+            (cand.reward == s3.reward && cand.cost < s3.cost)) {
             s3 = cand;
             s3.notes.push_back("S3 best updated at i=" + to_string(i));
         }
+    }
+
+    if (component_mode == 1) {
+        s1.algorithm_key = "hpr-s1";
+        return s1;
+    }
+    if (component_mode == 2) {
+        s3.algorithm_key = "hpr-s3";
+        return s3;
     }
 
     solution out = apx;
@@ -739,8 +856,8 @@ solution algorithms::heuristic_partial_row(const int budget) const {
     out.notes.push_back("Candidate: APX");
 
     auto consider_candidate = [&](const solution &cand, const string &name) {
-        if (cand.reward > out.reward + 1e-9 ||
-            (fabs(cand.reward - out.reward) <= 1e-9 && cand.cost < out.cost - 1e-9)) {
+        if (cand.reward > out.reward ||
+            (cand.reward == out.reward && cand.cost < out.cost)) {
             out = cand;
             out.algorithm_key = "hpr";
             out.notes.push_back("Selected candidate: " + name);
@@ -748,9 +865,9 @@ solution algorithms::heuristic_partial_row(const int budget) const {
     };
 
     consider_candidate(s1, "S1");
-    consider_candidate(s2, "S2");
     consider_candidate(s3, "S3");
-    out.notes.push_back("TODO: refine S2/S3 to match paper exactly (current implementation is paper-inspired)");
+    out.notes.push_back("HPR currently uses APR, S1, S3 (S2 removed)");
+    out.notes.push_back("TODO: refine S3 to match paper exactly (current implementation is paper-inspired)");
     return out;
 }
 
@@ -778,9 +895,9 @@ solution algorithms::apx_partial_row(const int budget) const {
     for (int i = 1; i < static_cast<int>(candidates.size()); ++i) {
         const solution &cur = *candidates[i];
         const solution &best = *candidates[best_idx];
-        if (cur.reward > best.reward + 1e-9) {
+        if (cur.reward > best.reward) {
             best_idx = i;
-        } else if (fabs(cur.reward - best.reward) <= 1e-9 && cur.cost < best.cost - 1e-9) {
+        } else if (cur.reward == best.reward && cur.cost < best.cost) {
             best_idx = i;
         }
     }
@@ -803,10 +920,10 @@ solution algorithms::greedy_full_row(const int budget) const {
         return out;
     }
 
-    vector<pair<double, int>> rows; // {row_reward, row_id_1based}
+    vector<pair<int, int>> rows; // {row_reward, row_id_1based}
     rows.reserve(num_rows);
     for (int i = 0; i < num_rows; ++i) {
-        double row_reward = 0.0;
+        int row_reward = 0;
         for (int j = 0; j < num_internal_cols; ++j) {
             row_reward += reward_map[i][j];
         }
@@ -814,14 +931,14 @@ solution algorithms::greedy_full_row(const int budget) const {
     }
 
     sort(rows.begin(), rows.end(),
-         [](const pair<double, int> &a, const pair<double, int> &b) {
+         [](const pair<int, int> &a, const pair<int, int> &b) {
              if (a.first == b.first) {
                  return a.second < b.second;
              }
              return a.first > b.first;
          });
 
-    double total_reward = 0.0;
+    int total_reward = 0;
     vector<int> selected_rows_1based;
 
     for (const int row_id : selected_rows_1based) {
@@ -839,9 +956,9 @@ solution algorithms::greedy_full_row(const int budget) const {
 
         const vector<pair<int, int>> candidate_cycle =
             util::build_full_row_cycle_from_selection(candidate_rows_0based, num_internal_cols);
-        const double candidate_cost = util::compute_cycle_cost(candidate_cycle);
+        const int candidate_cost = util::compute_cycle_cost(candidate_cycle);
 
-        if (candidate_cost <= static_cast<double>(budget)) {
+        if (candidate_cost <= budget) {
             selected_rows_1based.push_back(row_id);
             total_reward += row_reward;
         }
@@ -872,7 +989,7 @@ solution algorithms::greedy_partial_row_single_column(const int budget) const {
     }
 
     // Prefix rewards on internal columns: pref[i][c] is reward from first c internal columns (c in [0..n]).
-    vector<vector<double>> pref(num_rows, vector<double>(num_internal_cols + 1, 0.0));
+    vector<vector<int>> pref(num_rows, vector<int>(num_internal_cols + 1, 0));
     for (int i = 0; i < num_rows; ++i) {
         for (int c = 1; c <= num_internal_cols; ++c) {
             pref[i][c] = pref[i][c - 1] + rewards[i][c - 1];
@@ -880,8 +997,8 @@ solution algorithms::greedy_partial_row_single_column(const int budget) const {
     }
 
     int current_row = 0; // always on left corridor
-    double total_cost = 0.0;
-    double total_reward = 0.0;
+    int total_cost = 0;
+    int total_reward = 0;
 
     // selected_prefix[i] = number of internal columns already collected on row i (0..n)
     vector<int> selected_prefix(num_rows, 0);
@@ -895,18 +1012,18 @@ solution algorithms::greedy_partial_row_single_column(const int budget) const {
 
         for (int i = 0; i < num_rows; ++i) {
             for (int c = selected_prefix[i] + 1; c <= num_internal_cols; ++c) {
-                const double add_reward = pref[i][c] - pref[i][selected_prefix[i]];
-                if (add_reward <= 0.0) {
+                const int add_reward = pref[i][c] - pref[i][selected_prefix[i]];
+                if (add_reward <= 0) {
                     continue;
                 }
 
-                const double add_cost = static_cast<double>(abs(i - current_row) + 2 * c);
-                const double return_home_cost = static_cast<double>(i);
-                if (total_cost + add_cost + return_home_cost > static_cast<double>(budget) + 1e-9) {
+                const int add_cost = abs(i - current_row) + 2 * c;
+                const int return_home_cost = i;
+                if (total_cost + add_cost + return_home_cost > budget) {
                     continue;
                 }
 
-                if (add_cost <= 0.0) {
+                if (add_cost <= 0) {
                     continue;
                 }
 
@@ -930,7 +1047,7 @@ solution algorithms::greedy_partial_row_single_column(const int budget) const {
         }
 
         // Move vertically on the left corridor to the chosen row.
-        total_cost += static_cast<double>(abs(best_row - current_row));
+        total_cost += abs(best_row - current_row);
         if (cycle.back() != make_pair(best_row, 0)) {
             cycle.push_back({best_row, 0});
         }
@@ -938,7 +1055,7 @@ solution algorithms::greedy_partial_row_single_column(const int budget) const {
         // Partial-row excursion on the full graph: to internal column 'best_c' and back to left corridor.
         cycle.push_back({best_row, best_c});
         cycle.push_back({best_row, 0});
-        total_cost += static_cast<double>(2 * best_c);
+        total_cost += 2 * best_c;
 
         total_reward += pref[best_row][best_c] - pref[best_row][selected_prefix[best_row]];
         selected_prefix[best_row] = best_c;
@@ -948,7 +1065,7 @@ solution algorithms::greedy_partial_row_single_column(const int budget) const {
 
     if (current_row != 0) {
         cycle.push_back({0, 0});
-        total_cost += static_cast<double>(current_row);
+        total_cost += current_row;
     }
 
     out.reward = total_reward;
@@ -958,7 +1075,7 @@ solution algorithms::greedy_partial_row_single_column(const int budget) const {
 
     // Keep reward/cost based on the explicit path/selection we built.
     // The path-cost recomputation should match total_cost; keep a note if not for debugging.
-    if (fabs(out.cost - total_cost) > 1e-9) {
+    if (out.cost != total_cost) {
         out.notes.push_back("Warning: internal cost accumulator mismatch with cycle cost");
     }
 
@@ -976,8 +1093,8 @@ solution algorithms::opt_partial_row_single_column_right_public(const int budget
     if (budget < shift_cost) {
         // Not enough budget to go to the right corridor and come back.
         out.cycle = {{0, 0}};
-        out.cost = 0.0;
-        out.reward = 0.0;
+        out.cost = 0;
+        out.reward = 0;
         return out;
     }
 
@@ -1025,7 +1142,7 @@ solution algorithms::opt_partial_row_single_column_right_public(const int budget
 
     out.reward = flipped_left.reward;
     if (!dep.rewards().empty()) {
-        double top_row_reward = 0.0;
+        int top_row_reward = 0;
         for (const double value : dep.rewards()[0]) {
             top_row_reward += value;
         }

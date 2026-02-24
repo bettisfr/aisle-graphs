@@ -4,9 +4,9 @@
 
 #include "util.h"
 
-double util::compute_cycle_cost(const vector<pair<int, int>> &cycle) {
+int util::compute_cycle_cost(const vector<pair<int, int>> &cycle) {
     if (cycle.empty()) {
-        return 0.0;
+        return 0;
     }
 
     long long total = 0;
@@ -16,7 +16,7 @@ double util::compute_cycle_cost(const vector<pair<int, int>> &cycle) {
         total += llabs(static_cast<long long>(r2) - static_cast<long long>(r1));
         total += llabs(static_cast<long long>(c2) - static_cast<long long>(c1));
     }
-    return static_cast<double>(total);
+    return static_cast<int>(total);
 }
 
 vector<pair<int, int>> util::build_full_row_cycle_from_selection(const vector<int> &selected_rows_0based,
@@ -66,13 +66,13 @@ bool util::is_full_row_solution_feasible(const solution &sol, const int rows, co
     const int right_corridor = internal_cols + 1;
     const int graph_cols = internal_cols + 2;
 
-    if (sol.cost > static_cast<double>(budget) + 1e-9) {
+    if (sol.cost > budget) {
         return fail("Solution cost exceeds budget");
     }
 
     if (sol.cycle.empty()) {
         // Empty solution is feasible only if it also reports zero cost and no traversed rows.
-        if (fabs(sol.cost) > 1e-9 || !sol.traversed_rows.empty()) {
+        if (sol.cost != 0 || !sol.traversed_rows.empty()) {
             return fail("Empty cycle with non-empty rows or non-zero cost");
         }
         return true;
@@ -121,8 +121,8 @@ bool util::is_full_row_solution_feasible(const solution &sol, const int rows, co
         }
     }
 
-    const double path_cost = compute_cycle_cost(sol.cycle);
-    if (fabs(path_cost - sol.cost) > 1e-9) {
+    const int path_cost = compute_cycle_cost(sol.cycle);
+    if (path_cost != sol.cost) {
         return fail("Reported cost is inconsistent with the path");
     }
 
@@ -165,12 +165,12 @@ bool util::is_partial_row_single_column_solution_feasible(const solution &sol, c
     const int right_corridor = internal_cols + 1;
     const int graph_cols = internal_cols + 2;
 
-    if (sol.cost > static_cast<double>(budget) + 1e-9) {
+    if (sol.cost > budget) {
         return fail("Solution cost exceeds budget");
     }
 
     if (sol.cycle.empty()) {
-        if (fabs(sol.cost) > 1e-9) {
+        if (sol.cost != 0) {
             return fail("Empty cycle with non-zero cost");
         }
         return true;
@@ -239,8 +239,8 @@ bool util::is_partial_row_single_column_solution_feasible(const solution &sol, c
         }
     }
 
-    const double path_cost = compute_cycle_cost(sol.cycle);
-    if (fabs(path_cost - sol.cost) > 1e-9) {
+    const int path_cost = compute_cycle_cost(sol.cycle);
+    if (path_cost != sol.cost) {
         return fail("Reported cost is inconsistent with the path");
     }
 

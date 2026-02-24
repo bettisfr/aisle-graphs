@@ -11,8 +11,8 @@ using RewardGrid = std::vector<std::vector<double>>;
 struct solution {
     std::string algorithm_key;
 
-    double reward = 0.0;
-    double cost = 0.0;
+    int reward = 0;
+    int cost = 0;
     double running_time_sec = 0.0;
 
     std::vector<std::pair<int, int>> cycle;
@@ -23,8 +23,8 @@ struct solution {
 
 struct budget_result {
     int budget = 0;
-    double reward = 0.0;
-    double cost = 0.0;
+    int reward = 0;
+    int cost = 0;
 };
 
 struct experiment_series {
