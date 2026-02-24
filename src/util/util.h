@@ -18,6 +18,8 @@ public:
 
     static bool is_full_row_solution_feasible(const solution &, int rows, int internal_cols, int budget,
                                               string *reason = nullptr);
+    static bool is_partial_row_single_column_solution_feasible(const solution &, int rows, int internal_cols,
+                                                               int budget, string *reason = nullptr);
 
     template<typename T>
     static pair<double, double> calculate_avg_std(const vector<T> &values) {

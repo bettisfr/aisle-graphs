@@ -97,6 +97,14 @@ int main(const int argc, char **argv) {
             cout << "full_row_feasible=" << (ok ? 1 : 0) << "\n";
             cout << "full_row_reason=" << reason << "\n";
         }
+        if (cfg.algorithm == 3 || cfg.algorithm == 4) {
+            string reason;
+            const bool ok = util::is_partial_row_single_column_solution_feasible(
+                sol, dep.rows(), dep.cols(), cfg.budget, &reason
+            );
+            cout << "partial_row_feasible=" << (ok ? 1 : 0) << "\n";
+            cout << "partial_row_reason=" << reason << "\n";
+        }
 
         print_solution_summary(sol);
     } catch (const exception &e) {

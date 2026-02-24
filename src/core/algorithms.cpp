@@ -12,7 +12,9 @@ algorithms::algorithms(const deployment &dep) : dep(dep) {
     algorithm_functions = {
         &algorithms::opt_full_row,                  // 0 -> ofr
         &algorithms::greedy_full_row,               // 1 -> gfr
+
         &algorithms::heuristic_partial_row,         // 2 -> hprgc
+
         &algorithms::opt_partial_row_single_column, // 3 -> oprsc
         &algorithms::greedy_partial_row_single_column, // 4 -> gprsc
     };
@@ -39,6 +41,12 @@ solution algorithms::run_experiment(const int algorithm, const int budget) {
         string reason;
         if (!util::is_full_row_solution_feasible(out, dep.rows(), dep.cols(), budget, &reason)) {
             throw runtime_error("Invalid full-row solution: " + reason);
+        }
+    }
+    if (algorithm == 3 || algorithm == 4) { // oprsc, gprsc
+        string reason;
+        if (!util::is_partial_row_single_column_solution_feasible(out, dep.rows(), dep.cols(), budget, &reason)) {
+            throw runtime_error("Invalid partial-row single-column solution: " + reason);
         }
     }
 
@@ -147,8 +155,136 @@ solution algorithms::opt_full_row(const int budget) const {
 }
 
 solution algorithms::opt_partial_row_single_column(const int budget) const {
-    return make_todo_solution("oprsc", budget,
-        "Port Python _old/algorithms.py::opt_partial_row_single_column (or _old/main.cpp oprsc v1)");
+    solution out;
+    out.algorithm_key = "oprsc";
+
+    const RewardGrid &rewards = dep.rewards();
+    const int m = dep.rows();
+    const int n = dep.cols(); // internal profitable columns
+
+    if (budget <= 0 || m <= 0 || n <= 0) {
+        return out;
+    }
+
+    // Prefix rewards by number of visited internal columns:
+    // pref[i][c] = reward collected on row i by visiting columns 1..c (full-graph coords), with c in [0..n].
+    vector<vector<double>> pref(m, vector<double>(n + 1, 0.0));
+    for (int i = 0; i < m; ++i) {
+        for (int c = 1; c <= n; ++c) {
+            pref[i][c] = pref[i][c - 1] + rewards[i][c - 1];
+        }
+    }
+
+    // Reduced budget units: every movement contribution is even under this policy
+    // (vertical on left corridor + out-and-back horizontal), so we work on B/2.
+    const int B2 = budget / 2;
+    if (B2 <= 0) {
+        out.cycle = {{0, 0}};
+        return out;
+    }
+
+    const double NEG_INF = -1e100;
+    vector<vector<double>> R(m, vector<double>(B2 + 1, NEG_INF));
+    vector<vector<int>> S(m, vector<int>(B2 + 1, 0)); // chosen prefix length c in [0..n]
+
+    // First row: no vertical cost, only horizontal out-and-back cost 2*c.
+    for (int b = 0; b <= B2; ++b) {
+        const int best_c = min(n, b);
+        R[0][b] = pref[0][best_c];
+        S[0][b] = best_c;
+    }
+
+    // DP on rows. Transition consumes c + 1 reduced units:
+    // +1 accounts for moving the "active frontier" one row deeper.
+    for (int i = 1; i < m; ++i) {
+        for (int b = 0; b <= B2; ++b) {
+            if (b < i) {
+                R[i][b] = NEG_INF;
+                S[i][b] = 0;
+                continue;
+            }
+
+            if (b == i) {
+                // Reach row i and come back with zero horizontal exploration on all rows.
+                R[i][b] = 0.0;
+                S[i][b] = 0;
+                continue;
+            }
+
+            double best_val = NEG_INF;
+            int best_c = 0;
+            for (int c = 0; c <= n; ++c) {
+                const int idx = b - c - 1;
+                if (idx < 0) {
+                    continue;
+                }
+                if (R[i - 1][idx] <= NEG_INF / 2) {
+                    continue;
+                }
+                const double cand = R[i - 1][idx] + pref[i][c];
+                if (cand > best_val) {
+                    best_val = cand;
+                    best_c = c;
+                }
+            }
+
+            R[i][b] = best_val;
+            S[i][b] = best_c;
+        }
+    }
+
+    // Pick best deepest visited row at full reduced budget.
+    int best_max_row = -1;
+    double best_reward = 0.0;
+    for (int i = 0; i < m; ++i) {
+        if (R[i][B2] > best_reward) {
+            best_reward = R[i][B2];
+            best_max_row = i;
+        }
+    }
+
+    if (best_max_row < 0 || best_reward <= 0.0) {
+        out.cycle = {{0, 0}};
+        return out;
+    }
+
+    // Backtrack selected prefix lengths c_i for rows 0..best_max_row.
+    vector<int> c_by_row(best_max_row + 1, 0);
+    int b = B2;
+    for (int i = best_max_row; i >= 0; --i) {
+        const int c = S[i][b];
+        c_by_row[i] = c;
+        if (i > 0) {
+            b -= (c + 1);
+            if (b < 0) {
+                throw runtime_error("oprsc backtracking produced negative reduced budget");
+            }
+        }
+    }
+
+    // Build path on full graph coordinates (corridors included): only left corridor verticals.
+    vector<pair<int, int>> cycle;
+    cycle.reserve(3 * (best_max_row + 1) + 2);
+    cycle.push_back({0, 0});
+    for (int i = 0; i <= best_max_row; ++i) {
+        if (cycle.back() != make_pair(i, 0)) {
+            cycle.push_back({i, 0});
+        }
+        if (c_by_row[i] > 0) {
+            cycle.push_back({i, c_by_row[i]});
+            cycle.push_back({i, 0});
+            out.traversed_rows.push_back(i);
+        }
+        out.selected_columns_per_row.push_back(c_by_row[i]);
+    }
+    if (cycle.back() != make_pair(0, 0)) {
+        cycle.push_back({0, 0});
+    }
+
+    out.reward = best_reward;
+    out.cycle = move(cycle);
+    out.cost = util::compute_cycle_cost(out.cycle);
+    return out;
 }
 
 solution algorithms::opt_partial_row_single_column_novertical(const int budget) const {
@@ -230,6 +366,107 @@ solution algorithms::greedy_full_row(const int budget) const {
 }
 
 solution algorithms::greedy_partial_row_single_column(const int budget) const {
-    return make_todo_solution("gprsc", budget,
-        "Port greedy_partial_row_single_column baseline from Python");
+    solution out;
+    out.algorithm_key = "gprsc";
+
+    const RewardGrid &rewards = dep.rewards();
+    const int m = dep.rows();
+    const int n = dep.cols(); // internal profitable columns
+
+    if (budget <= 0 || m <= 0 || n <= 0) {
+        return out;
+    }
+
+    // Prefix rewards on internal columns: pref[i][c] is reward from first c internal columns (c in [0..n]).
+    vector<vector<double>> pref(m, vector<double>(n + 1, 0.0));
+    for (int i = 0; i < m; ++i) {
+        for (int c = 1; c <= n; ++c) {
+            pref[i][c] = pref[i][c - 1] + rewards[i][c - 1];
+        }
+    }
+
+    int current_row = 0; // always on left corridor
+    double total_cost = 0.0;
+    double total_reward = 0.0;
+
+    // selected_prefix[i] = number of internal columns already collected on row i (0..n)
+    vector<int> selected_prefix(m, 0);
+    vector<pair<int, int>> cycle;
+    cycle.push_back({0, 0});
+
+    while (true) {
+        double best_score = -1.0;
+        int best_row = -1;
+        int best_c = 0;
+
+        for (int i = 0; i < m; ++i) {
+            for (int c = selected_prefix[i] + 1; c <= n; ++c) {
+                const double add_reward = pref[i][c] - pref[i][selected_prefix[i]];
+                if (add_reward <= 0.0) {
+                    continue;
+                }
+
+                const double add_cost = static_cast<double>(abs(i - current_row) + 2 * c);
+                const double return_home_cost = static_cast<double>(i);
+                if (total_cost + add_cost + return_home_cost > static_cast<double>(budget) + 1e-9) {
+                    continue;
+                }
+
+                if (add_cost <= 0.0) {
+                    continue;
+                }
+
+                const double score = add_reward / add_cost;
+                if (score > best_score + 1e-12) {
+                    best_score = score;
+                    best_row = i;
+                    best_c = c;
+                } else if (fabs(score - best_score) <= 1e-12 && best_row != -1) {
+                    // Deterministic tie-break close to legacy numpy argmax scanning order.
+                    if (i < best_row || (i == best_row && c < best_c)) {
+                        best_row = i;
+                        best_c = c;
+                    }
+                }
+            }
+        }
+
+        if (best_row < 0) {
+            break;
+        }
+
+        // Move vertically on the left corridor to the chosen row.
+        total_cost += static_cast<double>(abs(best_row - current_row));
+        if (cycle.back() != make_pair(best_row, 0)) {
+            cycle.push_back({best_row, 0});
+        }
+
+        // Partial-row excursion on the full graph: to internal column 'best_c' and back to left corridor.
+        cycle.push_back({best_row, best_c});
+        cycle.push_back({best_row, 0});
+        total_cost += static_cast<double>(2 * best_c);
+
+        total_reward += pref[best_row][best_c] - pref[best_row][selected_prefix[best_row]];
+        selected_prefix[best_row] = best_c;
+        out.traversed_rows.push_back(best_row);
+        current_row = best_row;
+    }
+
+    if (current_row != 0) {
+        cycle.push_back({0, 0});
+        total_cost += static_cast<double>(current_row);
+    }
+
+    out.reward = total_reward;
+    out.selected_columns_per_row = selected_prefix;
+    out.cycle = move(cycle);
+    out.cost = util::compute_cycle_cost(out.cycle);
+
+    // Keep reward/cost based on the explicit path/selection we built.
+    // The path-cost recomputation should match total_cost; keep a note if not for debugging.
+    if (fabs(out.cost - total_cost) > 1e-9) {
+        out.notes.push_back("Warning: internal cost accumulator mismatch with cycle cost");
+    }
+
+    return out;
 }
