@@ -1,20 +1,12 @@
 #!/usr/bin/env python3
 
-import csv
-import random
+import argparse
 import subprocess
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CPP_BIN = REPO_ROOT / "cmake-build-release" / "aisle-graphs"
-TMP_INPUT = REPO_ROOT / "test" / "output" / "tmp_check_cpp_oprsc_gprsc_random_10x10.csv"
-
-
-def write_grid_csv(path: Path, grid) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="") as f:
-        csv.writer(f).writerows(grid)
 
 
 def compute_cycle_cost(cycle):
@@ -26,12 +18,14 @@ def compute_cycle_cost(cycle):
     return float(total)
 
 
-def run_cpp_alg(alg_name: str, input_csv_path: Path, budget: int):
+def run_cpp_alg(alg_name: str, budget: int, num_rows: int, num_internal_cols: int, seed: int):
     cmd = [
         str(CPP_BIN),
         "-algorithm", alg_name,
         "-budget", str(budget),
-        "-input_csv", str(input_csv_path),
+        "-rows", str(num_rows),
+        "-cols", str(num_internal_cols),
+        "-seed", str(seed),
         "-log", "0",
     ]
     proc = subprocess.run(cmd, cwd=str(REPO_ROOT), check=True, capture_output=True, text=True)
@@ -68,26 +62,32 @@ def run_cpp_alg(alg_name: str, input_csv_path: Path, budget: int):
     return out
 
 
-def build_random_grid(rows: int, cols: int, seed: int):
-    rng = random.Random(seed)
-    return [[rng.randint(0, 10) for _ in range(cols)] for _ in range(rows)]
+def parse_args():
+    p = argparse.ArgumentParser(description="C++ OPRSC/GPRSC random-instance checker.")
+    p.add_argument("--rows", type=int, default=10, help="Number of rows m")
+    p.add_argument("--cols", type=int, default=10, help="Number of internal columns n")
+    p.add_argument("--instances", type=int, default=33, help="Number of random instances")
+    p.add_argument("--seed-base", type=int, default=2000, help="Base seed (seed_base + instance_idx)")
+    return p.parse_args()
 
 
 def main() -> int:
     if not CPP_BIN.exists():
         raise RuntimeError(f"C++ binary not found: {CPP_BIN}")
 
-    rows = 10
-    internal_cols = 10
-    num_instances = 33
+    args = parse_args()
+    num_rows = args.rows
+    num_internal_cols = args.cols
+    num_instances = args.instances
+    seed_base = args.seed_base
 
     # Same upper bound used in the OFR/GFR check; enough to cover exhaustive visit regimes.
-    b_max = (internal_cols + 1) * rows + 2 * (rows - 1)
+    b_max = (num_internal_cols + 1) * num_rows + 2 * (num_rows - 1)
     budgets = list(range(0, b_max + 1))
 
     print(
         f"C++ OPRSC/GPRSC check on {num_instances} random instances "
-        f"({rows}x{internal_cols} internal, graph cols={internal_cols + 2})"
+        f"({num_rows}x{num_internal_cols} internal, graph cols={num_internal_cols + 2})"
     )
     print(f"Budget sweep: 0..{b_max} ({len(budgets)} values)")
 
@@ -95,15 +95,13 @@ def main() -> int:
     violations = 0
 
     for inst_idx in range(num_instances):
-        seed = 2000 + inst_idx
-        grid = build_random_grid(rows, internal_cols, seed)
-        write_grid_csv(TMP_INPUT, grid)
+        seed = seed_base + inst_idx
 
         print(f"Instance {inst_idx + 1}/{num_instances} (seed={seed})")
 
         for budget in budgets:
-            oprsc = run_cpp_alg("oprsc", TMP_INPUT, budget)
-            gprsc = run_cpp_alg("gprsc", TMP_INPUT, budget)
+            oprsc = run_cpp_alg("oprsc", budget, num_rows, num_internal_cols, seed)
+            gprsc = run_cpp_alg("gprsc", budget, num_rows, num_internal_cols, seed)
             total_points += 1
 
             bad = []

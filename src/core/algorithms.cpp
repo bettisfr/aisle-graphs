@@ -69,21 +69,21 @@ solution algorithms::opt_full_row(const int budget) const {
     out.algorithm_key = "ofr";
 
     const RewardGrid &rewards = dep.rewards();
-    const int m = dep.rows();
-    const int n = dep.cols();
+    const int num_rows = dep.rows();
+    const int num_internal_cols = dep.cols();
 
-    if (budget <= 0 || m <= 0 || n <= 0) {
+    if (budget <= 0 || num_rows <= 0 || num_internal_cols <= 0) {
         return out;
     }
 
     // OPTFRI-style implementation under the unified cost metric:
     // choose an optimal subset of full rows; cost depends only on max selected row and number of row crossings.
     // Each full-row crossing on the full graph costs (n+1) edges (from corridor to corridor).
-    const int row_cross_cost = n + 1;
+    const int row_cross_cost = num_internal_cols + 1;
 
-    vector<double> row_rewards(m, 0.0);
-    for (int i = 0; i < m; ++i) {
-        for (int j = 0; j < n; ++j) {
+    vector<double> row_rewards(num_rows, 0.0);
+    for (int i = 0; i < num_rows; ++i) {
+        for (int j = 0; j < num_internal_cols; ++j) {
             row_rewards[i] += rewards[i][j];
         }
     }
@@ -92,7 +92,7 @@ solution algorithms::opt_full_row(const int budget) const {
     double best_cost = 0.0;
     vector<int> best_rows;
 
-    for (int max_row = 0; max_row < m; ++max_row) {
+    for (int max_row = 0; max_row < num_rows; ++max_row) {
         // Candidate subsets must include max_row and can only contain rows in [0..max_row].
         vector<int> prefix_ids;
         prefix_ids.reserve(max_row);
@@ -149,7 +149,7 @@ solution algorithms::opt_full_row(const int budget) const {
 
     out.reward = best_reward;
     out.traversed_rows = best_rows;
-    out.cycle = util::build_full_row_cycle_from_selection(out.traversed_rows, n);
+    out.cycle = util::build_full_row_cycle_from_selection(out.traversed_rows, num_internal_cols);
     out.cost = util::compute_cycle_cost(out.cycle);
     return out;
 }
@@ -159,18 +159,18 @@ solution algorithms::opt_partial_row_single_column(const int budget) const {
     out.algorithm_key = "oprsc";
 
     const RewardGrid &rewards = dep.rewards();
-    const int m = dep.rows();
-    const int n = dep.cols(); // internal profitable columns
+    const int num_rows = dep.rows();
+    const int num_internal_cols = dep.cols(); // internal profitable columns
 
-    if (budget <= 0 || m <= 0 || n <= 0) {
+    if (budget <= 0 || num_rows <= 0 || num_internal_cols <= 0) {
         return out;
     }
 
     // Prefix rewards by number of visited internal columns:
     // pref[i][c] = reward collected on row i by visiting columns 1..c (full-graph coords), with c in [0..n].
-    vector<vector<double>> pref(m, vector<double>(n + 1, 0.0));
-    for (int i = 0; i < m; ++i) {
-        for (int c = 1; c <= n; ++c) {
+    vector<vector<double>> pref(num_rows, vector<double>(num_internal_cols + 1, 0.0));
+    for (int i = 0; i < num_rows; ++i) {
+        for (int c = 1; c <= num_internal_cols; ++c) {
             pref[i][c] = pref[i][c - 1] + rewards[i][c - 1];
         }
     }
@@ -184,19 +184,19 @@ solution algorithms::opt_partial_row_single_column(const int budget) const {
     }
 
     const double NEG_INF = -1e100;
-    vector<vector<double>> R(m, vector<double>(B2 + 1, NEG_INF));
-    vector<vector<int>> S(m, vector<int>(B2 + 1, 0)); // chosen prefix length c in [0..n]
+    vector<vector<double>> R(num_rows, vector<double>(B2 + 1, NEG_INF));
+    vector<vector<int>> S(num_rows, vector<int>(B2 + 1, 0)); // chosen prefix length c in [0..num_internal_cols]
 
     // First row: no vertical cost, only horizontal out-and-back cost 2*c.
     for (int b = 0; b <= B2; ++b) {
-        const int best_c = min(n, b);
+        const int best_c = min(num_internal_cols, b);
         R[0][b] = pref[0][best_c];
         S[0][b] = best_c;
     }
 
     // DP on rows. Transition consumes c + 1 reduced units:
     // +1 accounts for moving the "active frontier" one row deeper.
-    for (int i = 1; i < m; ++i) {
+    for (int i = 1; i < num_rows; ++i) {
         for (int b = 0; b <= B2; ++b) {
             if (b < i) {
                 R[i][b] = NEG_INF;
@@ -213,7 +213,7 @@ solution algorithms::opt_partial_row_single_column(const int budget) const {
 
             double best_val = NEG_INF;
             int best_c = 0;
-            for (int c = 0; c <= n; ++c) {
+            for (int c = 0; c <= num_internal_cols; ++c) {
                 const int idx = b - c - 1;
                 if (idx < 0) {
                     continue;
@@ -236,7 +236,7 @@ solution algorithms::opt_partial_row_single_column(const int budget) const {
     // Pick best deepest visited row at full reduced budget.
     int best_max_row = -1;
     double best_reward = 0.0;
-    for (int i = 0; i < m; ++i) {
+    for (int i = 0; i < num_rows; ++i) {
         if (R[i][B2] > best_reward) {
             best_reward = R[i][B2];
             best_max_row = i;
@@ -287,11 +287,6 @@ solution algorithms::opt_partial_row_single_column(const int budget) const {
     return out;
 }
 
-solution algorithms::opt_partial_row_single_column_novertical(const int budget) const {
-    return make_todo_solution("oprsc-nv", budget,
-        "Port no-vertical DP variant from _old/algorithms.py::opt_partial_row_single_column_novertical / _old/main.cpp v2");
-}
-
 solution algorithms::heuristic_partial_row(const int budget) const {
     return make_todo_solution("hprgc", budget,
         "Port heuristic_partial_row + heuristic_1..5 after OFR/OPRSC are available");
@@ -302,18 +297,18 @@ solution algorithms::greedy_full_row(const int budget) const {
     out.algorithm_key = "gfr";
 
     const RewardGrid &reward_map = dep.rewards();
-    const int m = dep.rows();
-    const int n = dep.cols(); // internal columns (same matrix convention as legacy code)
+    const int num_rows = dep.rows();
+    const int num_internal_cols = dep.cols(); // internal columns (same matrix convention as legacy code)
 
-    if (budget <= 0 || m <= 0 || n <= 0) {
+    if (budget <= 0 || num_rows <= 0 || num_internal_cols <= 0) {
         return out;
     }
 
     vector<pair<double, int>> rows; // {row_reward, row_id_1based}
-    rows.reserve(m);
-    for (int i = 0; i < m; ++i) {
+    rows.reserve(num_rows);
+    for (int i = 0; i < num_rows; ++i) {
         double row_reward = 0.0;
-        for (int j = 0; j < n; ++j) {
+        for (int j = 0; j < num_internal_cols; ++j) {
             row_reward += reward_map[i][j];
         }
         rows.emplace_back(row_reward, i + 1);
@@ -344,7 +339,7 @@ solution algorithms::greedy_full_row(const int budget) const {
         candidate_rows_0based.push_back(row_id - 1);
 
         const vector<pair<int, int>> candidate_cycle =
-            util::build_full_row_cycle_from_selection(candidate_rows_0based, n);
+            util::build_full_row_cycle_from_selection(candidate_rows_0based, num_internal_cols);
         const double candidate_cost = util::compute_cycle_cost(candidate_cycle);
 
         if (candidate_cost <= static_cast<double>(budget)) {
@@ -359,7 +354,7 @@ solution algorithms::greedy_full_row(const int budget) const {
         out.traversed_rows.push_back(row_id - 1);
     }
 
-    out.cycle = util::build_full_row_cycle_from_selection(out.traversed_rows, n);
+    out.cycle = util::build_full_row_cycle_from_selection(out.traversed_rows, num_internal_cols);
     out.cost = util::compute_cycle_cost(out.cycle);
 
     return out;
@@ -370,17 +365,17 @@ solution algorithms::greedy_partial_row_single_column(const int budget) const {
     out.algorithm_key = "gprsc";
 
     const RewardGrid &rewards = dep.rewards();
-    const int m = dep.rows();
-    const int n = dep.cols(); // internal profitable columns
+    const int num_rows = dep.rows();
+    const int num_internal_cols = dep.cols(); // internal profitable columns
 
-    if (budget <= 0 || m <= 0 || n <= 0) {
+    if (budget <= 0 || num_rows <= 0 || num_internal_cols <= 0) {
         return out;
     }
 
     // Prefix rewards on internal columns: pref[i][c] is reward from first c internal columns (c in [0..n]).
-    vector<vector<double>> pref(m, vector<double>(n + 1, 0.0));
-    for (int i = 0; i < m; ++i) {
-        for (int c = 1; c <= n; ++c) {
+    vector<vector<double>> pref(num_rows, vector<double>(num_internal_cols + 1, 0.0));
+    for (int i = 0; i < num_rows; ++i) {
+        for (int c = 1; c <= num_internal_cols; ++c) {
             pref[i][c] = pref[i][c - 1] + rewards[i][c - 1];
         }
     }
@@ -390,7 +385,7 @@ solution algorithms::greedy_partial_row_single_column(const int budget) const {
     double total_reward = 0.0;
 
     // selected_prefix[i] = number of internal columns already collected on row i (0..n)
-    vector<int> selected_prefix(m, 0);
+    vector<int> selected_prefix(num_rows, 0);
     vector<pair<int, int>> cycle;
     cycle.push_back({0, 0});
 
@@ -399,8 +394,8 @@ solution algorithms::greedy_partial_row_single_column(const int budget) const {
         int best_row = -1;
         int best_c = 0;
 
-        for (int i = 0; i < m; ++i) {
-            for (int c = selected_prefix[i] + 1; c <= n; ++c) {
+        for (int i = 0; i < num_rows; ++i) {
+            for (int c = selected_prefix[i] + 1; c <= num_internal_cols; ++c) {
                 const double add_reward = pref[i][c] - pref[i][selected_prefix[i]];
                 if (add_reward <= 0.0) {
                     continue;

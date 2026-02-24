@@ -2,8 +2,6 @@
 
 import argparse
 import csv
-import math
-import random
 import subprocess
 from pathlib import Path
 
@@ -12,17 +10,11 @@ import numpy as np
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-OLD_INPUT_DIR = REPO_ROOT / "_old" / "input"
 CPP_BIN = REPO_ROOT / "cmake-build-release" / "aisle-graphs"
 
 
-def write_grid_csv(path: Path, grid) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="") as f:
-        csv.writer(f).writerows(grid)
-
-
-def run_cpp_alg(alg_name: str, input_csv_path: Path, budget: int):
+def run_cpp_alg(alg_name: str, budget: int, rows: int = None, cols: int = None, seed: int = None,
+                input_csv_path: Path = None):
     if not CPP_BIN.exists():
         raise RuntimeError(f"C++ binary not found at {CPP_BIN}")
 
@@ -30,9 +22,14 @@ def run_cpp_alg(alg_name: str, input_csv_path: Path, budget: int):
         str(CPP_BIN),
         "-algorithm", alg_name,
         "-budget", str(budget),
-        "-input_csv", str(input_csv_path),
         "-log", "0",
     ]
+    if input_csv_path is not None:
+        cmd.extend(["-input_csv", str(input_csv_path)])
+    else:
+        if rows is None or cols is None or seed is None:
+            raise ValueError("rows/cols/seed are required when input_csv_path is not provided")
+        cmd.extend(["-rows", str(rows), "-cols", str(cols), "-seed", str(seed)])
     proc = subprocess.run(cmd, cwd=str(REPO_ROOT), check=True, capture_output=True, text=True)
 
     reward = None
@@ -67,75 +64,6 @@ def run_cpp_alg(alg_name: str, input_csv_path: Path, budget: int):
         "full_row_feasible": full_row_feasible,
         "full_row_reason": full_row_reason,
     }
-
-
-def build_random_grid(rows: int, cols: int, seed: int, min_reward: int = 0, max_reward: int = 10):
-    rng = random.Random(seed)
-    return [[rng.randint(min_reward, max_reward) for _ in range(cols)] for _ in range(rows)]
-
-
-def greedy_full_row_reference_with_path(grid, budget: int):
-    r = np.array(grid, dtype=float)
-    m, n = r.shape
-
-    out = {"reward": 0.0, "cost": 0.0, "traversed_rows": [], "cycle": []}
-    if budget <= 0 or m == 0 or n == 0:
-        out["cycle"] = [(0, 0)]
-        return out
-
-    compiled = [(float(np.sum(r[i, :])), i + 1) for i in range(m)]  # 1-based rows
-    compiled.sort(key=lambda x: (-x[0], x[1]))
-
-    beginning_row = 1
-    ending_row = 1
-    compiled_row_cost = n
-    current_row = beginning_row
-    current_side = 1
-    total_cost = 0
-    total_reward = 0.0
-    selected_rows_1based = []
-
-    for row_reward, row_id in compiled:
-        if current_side == 1:
-            loop_cost = abs(current_row - row_id) + 2 * compiled_row_cost + abs(row_id - ending_row)
-        else:
-            loop_cost = abs(current_row - row_id) + compiled_row_cost + abs(row_id - ending_row)
-
-        if loop_cost <= (budget - total_cost):
-            total_cost += abs(current_row - row_id) + compiled_row_cost
-            total_reward += row_reward
-            selected_rows_1based.append(row_id)
-            current_row = row_id
-            current_side = 2 if current_side == 1 else 1
-
-    if current_side == 2:
-        total_cost += abs(current_row - ending_row) + compiled_row_cost
-    else:
-        total_cost += abs(current_row - ending_row)
-
-    out["reward"] = float(total_reward)
-    out["cost"] = float(total_cost)
-    out["traversed_rows"] = [rid - 1 for rid in selected_rows_1based]
-
-    # Compressed cycle on internal columns (same convention as C++ port)
-    left_col = 0
-    right_col = n - 1
-    side_col = left_col
-    cycle = [(0, side_col)]
-    for rid in selected_rows_1based:
-        rr = rid - 1
-        if cycle[-1] != (rr, side_col):
-            cycle.append((rr, side_col))
-        side_col = right_col if side_col == left_col else left_col
-        if cycle[-1] != (rr, side_col):
-            cycle.append((rr, side_col))
-    if cycle[-1] != (0, side_col):
-        cycle.append((0, side_col))
-    if side_col != left_col:
-        cycle.append((0, left_col))
-
-    out["cycle"] = cycle
-    return out
 
 
 def draw_instance_with_path(ax, grid, cycle, title, reward_value, cost_value, full_row_feasible=None, full_row_reason=""):
@@ -192,8 +120,7 @@ def parse_args():
     p.add_argument("--rows", type=int, default=6, help="Rows m (used if --input-csv is omitted)")
     p.add_argument("--cols", type=int, default=8, help="Internal columns n (used if --input-csv is omitted)")
     p.add_argument("--seed", type=int, default=0, help="Random seed (used if --input-csv is omitted)")
-    p.add_argument("--out", type=str, default="test/output/plot_ofr_gfr_single.pdf", help="Output figure path (e.g., .pdf, .png)")
-    p.add_argument("--legacy-input-id", type=int, default=990010, help="Temporary legacy input id for OFR reference")
+    p.add_argument("--out", type=str, default="test/output/plot_ofr_gfr.pdf", help="Output figure path (e.g., .pdf, .png)")
     return p.parse_args()
 
 
@@ -204,7 +131,8 @@ def main() -> int:
         with open(args.input_csv, "r", newline="") as f:
             grid = [[float(x) for x in row] for row in csv.reader(f) if row]
     else:
-        grid = build_random_grid(args.rows, args.cols, args.seed)
+        rng = np.random.default_rng(args.seed)
+        grid = rng.integers(0, 11, size=(args.rows, args.cols)).astype(float).tolist()
 
     if not grid or not grid[0]:
         raise ValueError("Empty grid")
@@ -214,12 +142,13 @@ def main() -> int:
     if any(len(row) != n for row in grid):
         raise ValueError("Grid must be rectangular")
 
-    # Save shared instance to CSV consumed by the C++ binary.
-    legacy_input_file = OLD_INPUT_DIR / f"input-{args.legacy_input_id}.csv"
-    write_grid_csv(legacy_input_file, grid)
-
-    ofr_cpp = run_cpp_alg("ofr", legacy_input_file, args.budget)
-    gfr_cpp = run_cpp_alg("gfr", legacy_input_file, args.budget)
+    if args.input_csv:
+        input_csv = Path(args.input_csv)
+        ofr_cpp = run_cpp_alg("ofr", args.budget, input_csv_path=input_csv)
+        gfr_cpp = run_cpp_alg("gfr", args.budget, input_csv_path=input_csv)
+    else:
+        ofr_cpp = run_cpp_alg("ofr", args.budget, rows=args.rows, cols=args.cols, seed=args.seed)
+        gfr_cpp = run_cpp_alg("gfr", args.budget, rows=args.rows, cols=args.cols, seed=args.seed)
 
     if ofr_cpp["cost"] > args.budget + 1e-9:
         raise RuntimeError(f"OFR infeasible: cost={ofr_cpp['cost']} > budget={args.budget}")
@@ -248,7 +177,10 @@ def main() -> int:
     )
 
     out_path = Path(args.out)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    if not out_path.parent.exists():
+        raise RuntimeError(f"Output directory does not exist: {out_path.parent}")
+    if not out_path.parent.is_dir():
+        raise RuntimeError(f"Output path parent is not a directory: {out_path.parent}")
     fig.savefig(out_path, dpi=180)
     print(f"Saved figure to: {out_path}")
     return 0

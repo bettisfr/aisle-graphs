@@ -22,7 +22,6 @@ public:
 
     solution opt_full_row(int budget) const;                            // ofr
     solution opt_partial_row_single_column(int budget) const;           // oprsc
-    solution opt_partial_row_single_column_novertical(int budget) const;// oprsc-nv
     solution heuristic_partial_row(int budget) const;                   // hprgc
     solution greedy_full_row(int budget) const;                        // gfr
     solution greedy_partial_row_single_column(int budget) const;        // gprsc
