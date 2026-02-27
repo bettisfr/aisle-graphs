@@ -369,7 +369,7 @@ solution algorithms::solve_opr_ilp_gurobi(const int budget) const {
 
         GRBModel model = GRBModel(env);
         model.set(GRB_IntAttr_ModelSense, GRB_MAXIMIZE);
-        model.set(GRB_DoubleParam_TimeLimit, 60.0);
+        model.set(GRB_DoubleParam_TimeLimit, 300.0);
 
         vector<vector<GRBVar>> pos(horizon + 1, vector<GRBVar>(num_nodes));
         for (int t = 0; t <= horizon; ++t) {
