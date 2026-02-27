@@ -246,3 +246,77 @@ bool util::is_partial_row_single_column_solution_feasible(const solution &sol, c
 
     return true;
 }
+
+bool util::is_partial_row_solution_feasible(const solution &sol, const int rows, const int internal_cols,
+                                            const int budget, string *reason) {
+    auto fail = [&](const string &msg) {
+        if (reason != nullptr) {
+            *reason = msg;
+        }
+        return false;
+    };
+
+    if (rows <= 0 || internal_cols <= 0) {
+        return fail("Invalid instance dimensions");
+    }
+
+    const int left_corridor = 0;
+    const int right_corridor = internal_cols + 1;
+    const int graph_cols = internal_cols + 2;
+
+    if (sol.cost > budget) {
+        return fail("Solution cost exceeds budget");
+    }
+
+    if (sol.cycle.empty()) {
+        if (sol.cost != 0) {
+            return fail("Empty cycle with non-zero cost");
+        }
+        return true;
+    }
+
+    if (sol.cycle.front() != make_pair(0, left_corridor) || sol.cycle.back() != make_pair(0, left_corridor)) {
+        return fail("Cycle must start/end at depot (0,0)");
+    }
+
+    for (size_t i = 0; i < sol.cycle.size(); ++i) {
+        const auto [r, c] = sol.cycle[i];
+        if (r < 0 || r >= rows) {
+            return fail("Cycle row out of bounds");
+        }
+        if (c < 0 || c >= graph_cols) {
+            return fail("Cycle column out of bounds");
+        }
+
+        if (i + 1 == sol.cycle.size()) {
+            continue;
+        }
+
+        const auto [r2, c2] = sol.cycle[i + 1];
+        const int dr = abs(r2 - r);
+        const int dc = abs(c2 - c);
+
+        if (dr == 0 && dc == 0) {
+            return fail("Cycle contains duplicate consecutive vertex");
+        }
+        if (dr > 0 && dc > 0) {
+            return fail("Cycle contains a diagonal (cut) move");
+        }
+
+        if (dr > 0) {
+            if (c != c2) {
+                return fail("Vertical move changes column");
+            }
+            if (c != left_corridor && c != right_corridor) {
+                return fail("Vertical move is not on an external corridor");
+            }
+        }
+    }
+
+    const int path_cost = compute_cycle_cost(sol.cycle);
+    if (path_cost != sol.cost) {
+        return fail("Reported cost is inconsistent with the path");
+    }
+
+    return true;
+}

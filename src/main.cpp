@@ -104,13 +104,13 @@ int main(const int argc, char **argv) {
 
         print_reward_grid(dep);
 
-        if (cfg.algorithm == 0 || cfg.algorithm == 1) {
+        if (cfg.algorithm == 0 || cfg.algorithm == 2) {
             string reason;
             const bool ok = util::is_full_row_solution_feasible(sol, dep.rows(), dep.cols(), cfg.budget, &reason);
             cout << "full_row_feasible=" << (ok ? 1 : 0) << "\n";
             cout << "full_row_reason=" << reason << "\n";
         }
-        if (cfg.algorithm == 4 || cfg.algorithm == 5) {
+        if (cfg.algorithm == 5 || cfg.algorithm == 6) {
             string reason;
             const bool ok = util::is_partial_row_single_column_solution_feasible(
                 sol, dep.rows(), dep.cols(), cfg.budget, &reason

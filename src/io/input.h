@@ -12,11 +12,13 @@ struct input {
     int save = 0;
 
     // 0 -> ofr
-    // 1 -> gfr
-    // 2 -> hpr
-    // 3 -> apr
-    // 4 -> oprsc
-    // 5 -> gprsc
+    // 1 -> opr
+    // 2 -> gfr
+    // 3 -> hpr
+    // 4 -> apr
+    // 5 -> oprsc
+    // 6 -> gprsc
+    // 7 -> gpr
     int algorithm = 0;
     int budget = 0;
 

@@ -6,6 +6,8 @@
 
 #include "../util/util.h"
 
+#include <gurobi_c++.h>
+
 using namespace std;
 
 solution algorithms::solve_oprsc_left_on_grid(const RewardGrid &rewards, const int budget, const string &algorithm_key,
@@ -146,13 +148,15 @@ solution algorithms::solve_oprsc_left_on_grid(const RewardGrid &rewards, const i
 algorithms::algorithms(const deployment &dep) : dep(dep) {
     algorithm_functions = {
         &algorithms::opt_full_row,                  // 0 -> ofr
-        &algorithms::greedy_full_row,               // 1 -> gfr
+        &algorithms::opt_partial_row,               // 1 -> opr
+        &algorithms::greedy_full_row,               // 2 -> gfr
 
-        &algorithms::heuristic_partial_row,         // 2 -> hpr
-        &algorithms::apx_partial_row,               // 3 -> apr
+        &algorithms::heuristic_partial_row,         // 3 -> hpr
+        &algorithms::apx_partial_row,               // 4 -> apr
 
-        &algorithms::opt_partial_row_single_column, // 4 -> oprsc
-        &algorithms::greedy_partial_row_single_column, // 5 -> gprsc
+        &algorithms::opt_partial_row_single_column, // 5 -> oprsc
+        &algorithms::greedy_partial_row_single_column, // 6 -> gprsc
+        &algorithms::greedy_partial_row,            // 7 -> gpr
     };
 }
 
@@ -173,16 +177,22 @@ solution algorithms::run_experiment(const int algorithm, const int budget) {
     }
 
     // Validate full-row solutions structurally (path/layout/cost consistency).
-    if (algorithm == 0 || algorithm == 1) { // ofr, gfr
+    if (algorithm == 0 || algorithm == 2) { // ofr, gfr
         string reason;
         if (!util::is_full_row_solution_feasible(out, dep.rows(), dep.cols(), budget, &reason)) {
             throw runtime_error("Invalid full-row solution: " + reason);
         }
     }
-    if (algorithm == 4 || algorithm == 5) { // oprsc, gprsc
+    if (algorithm == 5 || algorithm == 6) { // oprsc, gprsc
         string reason;
         if (!util::is_partial_row_single_column_solution_feasible(out, dep.rows(), dep.cols(), budget, &reason)) {
             throw runtime_error("Invalid partial-row single-column solution: " + reason);
+        }
+    }
+    if (algorithm == 1 || algorithm == 3 || algorithm == 4 || algorithm == 7) { // opr, hpr, apr, gpr
+        string reason;
+        if (!util::is_partial_row_solution_feasible(out, dep.rows(), dep.cols(), budget, &reason)) {
+            throw runtime_error("Invalid aisle-graph path solution: " + reason);
         }
     }
 
@@ -276,6 +286,235 @@ solution algorithms::opt_full_row(const int budget) const {
     out.cycle = util::build_full_row_cycle_from_selection(out.traversed_rows, num_internal_cols);
     out.cost = util::compute_cycle_cost(out.cycle);
     return out;
+}
+
+solution algorithms::solve_opr_ilp_gurobi(const int budget) const {
+    solution out;
+    out.algorithm_key = "opr";
+    const int num_rows = dep.rows();
+    const int num_internal_cols = dep.cols();
+    const int num_cols = num_internal_cols + 2; // include left/right corridors
+
+    if (budget <= 0 || num_rows <= 0 || num_internal_cols <= 0) {
+        out.cycle = {{0, 0}};
+        return out;
+    }
+
+    vector<vector<int>> full_reward(num_rows, vector<int>(num_cols, 0));
+    for (int i = 0; i < num_rows; ++i) {
+        for (int j = 0; j < num_internal_cols; ++j) {
+            full_reward[i][j + 1] = static_cast<int>(dep.rewards()[i][j]);
+        }
+    }
+
+    struct Arc {
+        int from;
+        int to;
+    };
+
+    const int num_nodes = num_rows * num_cols;
+    const int depot = 0; // (0,0)
+    auto node_id = [num_cols](const int r, const int c) { return r * num_cols + c; };
+
+    vector<Arc> arcs;
+    arcs.reserve(4 * num_nodes);
+    vector<vector<int>> out_arcs(num_nodes), in_arcs(num_nodes);
+    for (int r = 0; r < num_rows; ++r) {
+        for (int c = 0; c < num_cols; ++c) {
+            const int u = node_id(r, c);
+
+            // Horizontal edges are allowed on every row.
+            if (c - 1 >= 0) {
+                const int v = node_id(r, c - 1);
+                const int aidx = static_cast<int>(arcs.size());
+                arcs.push_back({u, v});
+                out_arcs[u].push_back(aidx);
+                in_arcs[v].push_back(aidx);
+            }
+            if (c + 1 < num_cols) {
+                const int v = node_id(r, c + 1);
+                const int aidx = static_cast<int>(arcs.size());
+                arcs.push_back({u, v});
+                out_arcs[u].push_back(aidx);
+                in_arcs[v].push_back(aidx);
+            }
+
+            // Vertical edges are allowed only on external corridors.
+            const bool external_col = (c == 0 || c == num_cols - 1);
+            if (external_col) {
+                if (r - 1 >= 0) {
+                    const int v = node_id(r - 1, c);
+                    const int aidx = static_cast<int>(arcs.size());
+                    arcs.push_back({u, v});
+                    out_arcs[u].push_back(aidx);
+                    in_arcs[v].push_back(aidx);
+                }
+                if (r + 1 < num_rows) {
+                    const int v = node_id(r + 1, c);
+                    const int aidx = static_cast<int>(arcs.size());
+                    arcs.push_back({u, v});
+                    out_arcs[u].push_back(aidx);
+                    in_arcs[v].push_back(aidx);
+                }
+            }
+        }
+    }
+
+    const int horizon = budget;
+
+    try {
+        GRBEnv env = GRBEnv(true);
+        env.set("OutputFlag", "0");
+        env.start();
+
+        GRBModel model = GRBModel(env);
+        model.set(GRB_IntAttr_ModelSense, GRB_MAXIMIZE);
+        model.set(GRB_DoubleParam_TimeLimit, 60.0);
+
+        vector<vector<GRBVar>> pos(horizon + 1, vector<GRBVar>(num_nodes));
+        for (int t = 0; t <= horizon; ++t) {
+            for (int v = 0; v < num_nodes; ++v) {
+                pos[t][v] = model.addVar(0.0, 1.0, 0.0, GRB_BINARY, "p_" + to_string(t) + "_" + to_string(v));
+            }
+        }
+
+        vector<vector<GRBVar>> move(horizon, vector<GRBVar>(arcs.size()));
+        vector<GRBVar> idle(horizon);
+        for (int t = 0; t < horizon; ++t) {
+            idle[t] = model.addVar(0.0, 1.0, 0.0, GRB_BINARY, "idle_" + to_string(t));
+            for (size_t a = 0; a < arcs.size(); ++a) {
+                move[t][a] = model.addVar(0.0, 1.0, 0.0, GRB_BINARY,
+                                          "x_" + to_string(t) + "_" + to_string(a));
+            }
+        }
+
+        vector<GRBVar> visit(num_nodes);
+        for (int v = 0; v < num_nodes; ++v) {
+            visit[v] = model.addVar(0.0, 1.0, 0.0, GRB_BINARY, "y_" + to_string(v));
+        }
+
+        // Initial position at depot.
+        for (int v = 0; v < num_nodes; ++v) {
+            if (v == depot) {
+                model.addConstr(pos[0][v] == 1.0, "start_depot");
+            } else {
+                model.addConstr(pos[0][v] == 0.0, "start_zero_" + to_string(v));
+            }
+        }
+
+        // Exactly one position at each time step.
+        for (int t = 0; t <= horizon; ++t) {
+            GRBLinExpr sum_pos = 0.0;
+            for (int v = 0; v < num_nodes; ++v) {
+                sum_pos += pos[t][v];
+            }
+            model.addConstr(sum_pos == 1.0, "one_pos_" + to_string(t));
+        }
+
+        for (int t = 0; t < horizon; ++t) {
+            // Outgoing action from current node.
+            for (int v = 0; v < num_nodes; ++v) {
+                GRBLinExpr outflow = 0.0;
+                for (const int aidx : out_arcs[v]) {
+                    outflow += move[t][aidx];
+                }
+                if (v == depot) {
+                    outflow += idle[t];
+                }
+                model.addConstr(outflow == pos[t][v], "flow_out_" + to_string(t) + "_" + to_string(v));
+            }
+
+            // Incoming action defines next node.
+            for (int v = 0; v < num_nodes; ++v) {
+                GRBLinExpr inflow = 0.0;
+                for (const int aidx : in_arcs[v]) {
+                    inflow += move[t][aidx];
+                }
+                if (v == depot) {
+                    inflow += idle[t];
+                }
+                model.addConstr(inflow == pos[t + 1][v], "flow_in_" + to_string(t) + "_" + to_string(v));
+            }
+        }
+
+        // Must end at depot after at most budget moves (idle is allowed only at depot).
+        model.addConstr(pos[horizon][depot] == 1.0, "end_depot");
+
+        // Visit linking.
+        for (int v = 0; v < num_nodes; ++v) {
+            GRBLinExpr seen = 0.0;
+            for (int t = 0; t <= horizon; ++t) {
+                seen += pos[t][v];
+            }
+            model.addConstr(visit[v] <= seen, "visit_link_" + to_string(v));
+        }
+
+        GRBLinExpr obj = 0.0;
+        for (int r = 0; r < num_rows; ++r) {
+            for (int c = 0; c < num_cols; ++c) {
+                const int v = node_id(r, c);
+                obj += static_cast<double>(full_reward[r][c]) * visit[v];
+            }
+        }
+        model.setObjective(obj);
+        model.optimize();
+
+        const int status = model.get(GRB_IntAttr_Status);
+        if (status != GRB_OPTIMAL) {
+            throw runtime_error("Gurobi did not return an optimal solution for OPR ILP");
+        }
+
+        vector<int> path_nodes;
+        path_nodes.reserve(horizon + 1);
+        for (int t = 0; t <= horizon; ++t) {
+            int at = -1;
+            for (int v = 0; v < num_nodes; ++v) {
+                if (pos[t][v].get(GRB_DoubleAttr_X) > 0.5) {
+                    at = v;
+                    break;
+                }
+            }
+            if (at < 0) {
+                throw runtime_error("OPR ILP path reconstruction failed: no active node at a time step");
+            }
+            path_nodes.push_back(at);
+        }
+
+        vector<pair<int, int>> cycle;
+        cycle.reserve(path_nodes.size());
+        for (const int v : path_nodes) {
+            cycle.push_back({v / num_cols, v % num_cols});
+        }
+
+        vector<pair<int, int>> cleaned;
+        cleaned.reserve(cycle.size());
+        for (const auto &p : cycle) {
+            if (cleaned.empty() || cleaned.back() != p) {
+                cleaned.push_back(p);
+            }
+        }
+        if (cleaned.empty()) {
+            cleaned.push_back({0, 0});
+        }
+        if (cleaned.front() != make_pair(0, 0)) {
+            cleaned.insert(cleaned.begin(), {0, 0});
+        }
+        if (cleaned.back() != make_pair(0, 0)) {
+            cleaned.push_back({0, 0});
+        }
+
+        out.cycle = std::move(cleaned);
+        out.cost = util::compute_cycle_cost(out.cycle);
+        out.reward = static_cast<int>(llround(model.get(GRB_DoubleAttr_ObjVal)));
+        out.notes.push_back("OPR ILP via Gurobi (time-expanded exact model)");
+    } catch (const GRBException &e) {
+        throw runtime_error("Gurobi error in OPR ILP: code=" + to_string(e.getErrorCode()) + " msg=" + e.getMessage());
+    }
+    return out;
+}
+
+solution algorithms::opt_partial_row(const int budget) const {
+    return solve_opr_ilp_gurobi(budget);
 }
 
 solution algorithms::opt_partial_row_single_column(const int budget) const {
@@ -1079,6 +1318,390 @@ solution algorithms::greedy_partial_row_single_column(const int budget) const {
         out.notes.push_back("Warning: internal cost accumulator mismatch with cycle cost");
     }
 
+    return out;
+}
+
+solution algorithms::greedy_partial_row(const int budget) const {
+    solution out;
+    out.algorithm_key = "gpr";
+
+    const int num_rows = dep.rows();
+    const int num_internal_cols = dep.cols();
+    if (budget <= 0 || num_rows <= 0 || num_internal_cols <= 0) {
+        out.cycle = {{0, 0}};
+        return out;
+    }
+
+    const int num_cols = num_internal_cols + 2; // includes left/right corridors
+    const int ending_row = 0;
+
+    vector<vector<int>> reward_map(num_rows, vector<int>(num_cols, 0));
+    for (int i = 0; i < num_rows; ++i) {
+        for (int j = 0; j < num_internal_cols; ++j) {
+            reward_map[i][j + 1] = static_cast<int>(dep.rewards()[i][j]);
+        }
+    }
+    const vector<vector<int>> original_rewards = reward_map;
+
+    int current_row = 0;
+    int current_side = 1; // 1 = left, 2 = right
+    int total_cost = 0;
+    int total_reward = reward_map[current_row][0];
+    reward_map[current_row][0] = 0;
+
+    vector<int> tour;
+    tour.push_back(1); // MATLAB-style 1-based linearized index
+
+    vector<vector<int>> cumulative_reward_1(num_rows, vector<int>(num_cols, 0));
+    vector<vector<int>> cumulative_reward_2(num_rows, vector<int>(num_cols, 0));
+    vector<vector<int>> cumulative_cost_1(num_rows, vector<int>(num_cols, 0));
+    vector<vector<int>> cumulative_cost_2(num_rows, vector<int>(num_cols, 0));
+
+    for (int i = 0; i < num_rows; ++i) {
+        for (int j = 0; j < num_cols; ++j) {
+            int left_sum = 0;
+            for (int t = 0; t <= j; ++t) {
+                left_sum += reward_map[i][t];
+            }
+            cumulative_reward_1[i][j] = left_sum;
+
+            int rev_j = num_cols - 1 - j;
+            int right_sum = 0;
+            for (int t = num_cols - 1; t >= rev_j; --t) {
+                right_sum += reward_map[i][t];
+            }
+            cumulative_reward_2[i][rev_j] = right_sum;
+
+            cumulative_cost_1[i][j] = j;
+            cumulative_cost_2[i][rev_j] = j;
+        }
+    }
+
+    auto sum_all = [](const vector<vector<int>> &mat) {
+        long long s = 0;
+        for (const auto &row : mat) {
+            for (const int v : row) {
+                s += v;
+            }
+        }
+        return s;
+    };
+
+    auto push_linear = [&](const int row, const int col) {
+        tour.push_back(row * num_cols + col + 1);
+    };
+
+    while (sum_all(cumulative_reward_1) > 0 || sum_all(cumulative_reward_2) > 0) {
+        const int budget_left = budget - total_cost;
+        if (budget_left <= 0) {
+            break;
+        }
+
+        if (current_side == 1) {
+            double best_loop_heuristic = -1.0;
+            int best_loop_index = 0;
+            double best_muted_heuristic = -1.0;
+            int best_muted_row = 0;
+            int best_muted_col = 0;
+
+            for (int i = 0; i < num_rows; ++i) {
+                const int distance_side = abs(current_row - i);
+
+                const int loop_den = cumulative_cost_1[i][num_cols - 1] + distance_side;
+                if (loop_den > 0) {
+                    const double h = static_cast<double>(cumulative_reward_1[i][num_cols - 1]) /
+                                     static_cast<double>(loop_den);
+                    if (h > best_loop_heuristic) {
+                        best_loop_heuristic = h;
+                        best_loop_index = i;
+                    }
+                }
+
+                for (int j = 0; j < num_cols; ++j) {
+                    const int den = 2 * cumulative_cost_1[i][j] + distance_side;
+                    if (den <= 0) {
+                        continue;
+                    }
+                    const double h = static_cast<double>(cumulative_reward_1[i][j]) / static_cast<double>(den);
+                    if (h > best_muted_heuristic) {
+                        best_muted_heuristic = h;
+                        best_muted_row = i;
+                        best_muted_col = j;
+                    }
+                }
+            }
+
+            const int loop_cost = abs(current_row - best_loop_index) +
+                                  2 * cumulative_cost_1[best_loop_index][num_cols - 1] +
+                                  abs(best_loop_index - ending_row);
+            const int muted_loop_cost = abs(current_row - best_muted_row) +
+                                        2 * cumulative_cost_1[best_muted_row][best_muted_col] +
+                                        abs(best_muted_row - ending_row);
+
+            if ((best_loop_heuristic >= best_muted_heuristic) && (loop_cost <= budget_left)) {
+                total_cost += abs(current_row - best_loop_index) + cumulative_cost_1[best_loop_index][num_cols - 1];
+                total_reward += cumulative_reward_1[best_loop_index][num_cols - 1];
+
+                const int step = (current_row <= best_loop_index) ? 1 : -1;
+                for (int i = current_row; i != best_loop_index; i += step) {
+                    push_linear(i, 0);
+                    total_reward += cumulative_reward_1[i][0];
+                    for (int j = 0; j < num_cols; ++j) {
+                        cumulative_reward_1[i][j] = max(0, cumulative_reward_1[i][j] - cumulative_reward_1[i][0]);
+                    }
+                    if (num_cols > 1) {
+                        cumulative_reward_2[i][0] = cumulative_reward_2[i][1];
+                    }
+                }
+
+                for (int j = 0; j < num_cols; ++j) {
+                    push_linear(best_loop_index, j);
+                }
+
+                current_row = best_loop_index;
+                current_side = 2;
+                fill(cumulative_reward_1[current_row].begin(), cumulative_reward_1[current_row].end(), 0);
+                fill(cumulative_reward_2[current_row].begin(), cumulative_reward_2[current_row].end(), 0);
+            } else if (muted_loop_cost <= budget_left) {
+                total_cost += abs(current_row - best_muted_row) + 2 * cumulative_cost_1[best_muted_row][best_muted_col];
+
+                const int step = (current_row <= best_muted_row) ? 1 : -1;
+                for (int i = current_row; i != best_muted_row; i += step) {
+                    push_linear(i, 0);
+                    total_reward += cumulative_reward_1[i][0];
+                    for (int j = 0; j < num_cols; ++j) {
+                        cumulative_reward_1[i][j] = max(0, cumulative_reward_1[i][j] - cumulative_reward_1[i][0]);
+                    }
+                    if (num_cols > 1) {
+                        cumulative_reward_2[i][0] = cumulative_reward_2[i][1];
+                    }
+                }
+
+                for (int j = 0; j <= best_muted_col; ++j) {
+                    push_linear(best_muted_row, j);
+                }
+                for (int j = best_muted_col; j >= 0; --j) {
+                    push_linear(best_muted_row, j);
+                }
+
+                const int accumulated_reward = cumulative_reward_1[best_muted_row][best_muted_col];
+                total_reward += accumulated_reward;
+                current_row = best_muted_row;
+
+                for (int j = 0; j < num_cols; ++j) {
+                    cumulative_reward_1[best_muted_row][j] = max(0, cumulative_reward_1[best_muted_row][j] - accumulated_reward);
+                }
+                const int suffix_val = (best_muted_col + 1 < num_cols) ? cumulative_reward_2[best_muted_row][best_muted_col + 1] : 0;
+                for (int j = 0; j <= best_muted_col; ++j) {
+                    cumulative_reward_2[best_muted_row][j] = suffix_val;
+                }
+            } else {
+                vector<vector<int>> reachable(num_rows, vector<int>(num_cols, 0));
+                for (int i = 0; i < num_rows; ++i) {
+                    const int tmp_sum = abs(current_row - i) + abs(i - ending_row);
+                    for (int j = 0; j < num_cols; ++j) {
+                        const int temp_cost = tmp_sum + 2 * cumulative_cost_1[i][j];
+                        reachable[i][j] = (temp_cost <= budget_left) ? 1 : 0;
+                    }
+                }
+
+                for (int i = 0; i < num_rows; ++i) {
+                    bool any_unreachable = false;
+                    for (int j = 0; j < num_cols; ++j) {
+                        if (!reachable[i][j]) {
+                            cumulative_reward_1[i][j] = 0;
+                            any_unreachable = true;
+                        }
+                    }
+                    if (any_unreachable) {
+                        fill(cumulative_reward_2[i].begin(), cumulative_reward_2[i].end(), 0);
+                    }
+                }
+            }
+        } else { // current_side == 2
+            double best_loop_heuristic = -1.0;
+            int best_loop_index = 0;
+            double best_muted_heuristic = -1.0;
+            int best_muted_row = 0;
+            int best_muted_col = 0;
+
+            for (int i = 0; i < num_rows; ++i) {
+                const int distance_side = abs(current_row - i);
+
+                const int loop_den = cumulative_cost_2[i][0] + distance_side;
+                if (loop_den > 0) {
+                    const double h = static_cast<double>(cumulative_reward_2[i][0]) / static_cast<double>(loop_den);
+                    if (h > best_loop_heuristic) {
+                        best_loop_heuristic = h;
+                        best_loop_index = i;
+                    }
+                }
+
+                for (int j = 0; j < num_cols; ++j) {
+                    const int den = 2 * cumulative_cost_2[i][j] + distance_side;
+                    if (den <= 0) {
+                        continue;
+                    }
+                    const double h = static_cast<double>(cumulative_reward_2[i][j]) / static_cast<double>(den);
+                    if (h > best_muted_heuristic) {
+                        best_muted_heuristic = h;
+                        best_muted_row = i;
+                        best_muted_col = j;
+                    }
+                }
+            }
+
+            const int loop_cost = abs(current_row - best_loop_index) +
+                                  cumulative_cost_2[best_loop_index][0] +
+                                  abs(best_loop_index - ending_row);
+            const int muted_loop_cost = abs(current_row - best_muted_row) +
+                                        2 * cumulative_cost_2[best_muted_row][best_muted_col] +
+                                        abs(best_muted_row - ending_row) +
+                                        cumulative_cost_2[ending_row][0];
+
+            if ((best_loop_heuristic >= best_muted_heuristic) && (loop_cost <= budget_left)) {
+                total_cost += abs(current_row - best_loop_index) + cumulative_cost_2[best_loop_index][0];
+                total_reward += cumulative_reward_2[best_loop_index][0];
+
+                const int step = (current_row <= best_loop_index) ? 1 : -1;
+                for (int i = current_row; i != best_loop_index; i += step) {
+                    push_linear(i, num_cols - 1);
+                    total_reward += cumulative_reward_2[i][num_cols - 1];
+                    for (int j = 0; j < num_cols; ++j) {
+                        cumulative_reward_2[i][j] = max(0, cumulative_reward_2[i][j] - cumulative_reward_2[i][num_cols - 1]);
+                    }
+                    if (num_cols > 1) {
+                        cumulative_reward_1[i][num_cols - 1] = cumulative_reward_1[i][num_cols - 2];
+                    }
+                }
+
+                for (int j = num_cols - 1; j >= 0; --j) {
+                    push_linear(best_loop_index, j);
+                }
+
+                current_row = best_loop_index;
+                current_side = 1;
+                fill(cumulative_reward_1[current_row].begin(), cumulative_reward_1[current_row].end(), 0);
+                fill(cumulative_reward_2[current_row].begin(), cumulative_reward_2[current_row].end(), 0);
+            } else if (muted_loop_cost <= budget_left) {
+                total_cost += abs(current_row - best_muted_row) + 2 * cumulative_cost_2[best_muted_row][best_muted_col];
+
+                const int step = (current_row <= best_muted_row) ? 1 : -1;
+                for (int i = current_row; i != best_muted_row; i += step) {
+                    push_linear(i, num_cols - 1);
+                    total_reward += cumulative_reward_2[i][num_cols - 1];
+                    for (int j = 0; j < num_cols; ++j) {
+                        cumulative_reward_2[i][j] = max(0, cumulative_reward_2[i][j] - cumulative_reward_2[i][num_cols - 1]);
+                    }
+                    if (num_cols > 1) {
+                        cumulative_reward_1[i][num_cols - 1] = cumulative_reward_1[i][num_cols - 2];
+                    }
+                }
+
+                for (int j = num_cols - 1; j >= best_muted_col; --j) {
+                    push_linear(best_muted_row, j);
+                }
+                for (int j = best_muted_col; j < num_cols; ++j) {
+                    push_linear(best_muted_row, j);
+                }
+
+                const int accumulated_reward = cumulative_reward_2[best_muted_row][best_muted_col];
+                total_reward += accumulated_reward;
+                current_row = best_muted_row;
+
+                for (int j = 0; j < num_cols; ++j) {
+                    cumulative_reward_2[best_muted_row][j] = max(0, cumulative_reward_2[best_muted_row][j] - accumulated_reward);
+                }
+                const int prefix_val = (best_muted_col - 1 >= 0) ? cumulative_reward_1[best_muted_row][best_muted_col - 1] : 0;
+                for (int j = num_cols - 1; j >= best_muted_col; --j) {
+                    cumulative_reward_1[best_muted_row][j] = prefix_val;
+                }
+            } else {
+                vector<int> reachable(num_rows, 0);
+                for (int i = 0; i < num_rows; ++i) {
+                    const int temp_cost = abs(current_row - i) + cumulative_cost_2[i][0] + abs(i - ending_row);
+                    reachable[i] = (temp_cost <= budget_left) ? 1 : 0;
+                }
+                for (int i = 0; i < num_rows; ++i) {
+                    if (!reachable[i]) {
+                        fill(cumulative_reward_1[i].begin(), cumulative_reward_1[i].end(), 0);
+                        fill(cumulative_reward_2[i].begin(), cumulative_reward_2[i].end(), 0);
+                    }
+                }
+                for (int j = 0; j <= best_muted_col; ++j) {
+                    cumulative_reward_2[best_muted_row][j] = 0;
+                }
+                const int drop = cumulative_reward_1[best_muted_row][best_muted_col];
+                for (int j = 0; j < num_cols; ++j) {
+                    cumulative_reward_1[best_muted_row][j] = max(0, cumulative_reward_1[best_muted_row][j] - drop);
+                }
+            }
+        }
+    }
+
+    if (current_side == 1) {
+        total_cost += abs(current_row - ending_row);
+        const int step = (current_row > ending_row) ? -1 : 1;
+        for (int i = current_row;; i += step) {
+            push_linear(i, 0);
+            if (i == ending_row) {
+                break;
+            }
+        }
+    } else {
+        total_cost += abs(current_row - ending_row) + cumulative_cost_2[current_row][0];
+        for (int j = num_cols - 1; j >= 0; --j) {
+            push_linear(current_row, j);
+        }
+        const int step = (current_row > ending_row) ? -1 : 1;
+        for (int i = current_row;; i += step) {
+            push_linear(i, 0);
+            if (i == ending_row) {
+                break;
+            }
+        }
+    }
+
+    vector<int> dedup_tour;
+    dedup_tour.reserve(tour.size());
+    for (const int idx : tour) {
+        if (dedup_tour.empty() || dedup_tour.back() != idx) {
+            dedup_tour.push_back(idx);
+        }
+    }
+
+    out.cycle.clear();
+    out.cycle.reserve(dedup_tour.size());
+    for (const int idx1 : dedup_tour) {
+        const int zero = idx1 - 1;
+        const int row = zero / num_cols;
+        const int col = zero % num_cols;
+        out.cycle.push_back({row, col});
+    }
+    if (out.cycle.empty()) {
+        out.cycle.push_back({0, 0});
+    }
+
+    vector<vector<char>> picked(num_rows, vector<char>(num_cols, 0));
+    int reward_from_cycle = 0;
+    for (const auto &[r, c] : out.cycle) {
+        if (r < 0 || r >= num_rows || c < 0 || c >= num_cols) {
+            continue;
+        }
+        if (!picked[r][c]) {
+            picked[r][c] = 1;
+            reward_from_cycle += original_rewards[r][c];
+        }
+    }
+
+    out.reward = reward_from_cycle;
+    out.cost = util::compute_cycle_cost(out.cycle);
+    if (out.cost != total_cost) {
+        out.notes.push_back("Warning: gpr cost accumulator mismatch with reconstructed cycle cost");
+    }
+    if (out.reward != total_reward) {
+        out.notes.push_back("Info: gpr reward recomputed from cycle differs from accumulator");
+    }
     return out;
 }
 

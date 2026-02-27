@@ -32,6 +32,16 @@ set(sources
 
 add_executable(${CMAKE_PROJECT_NAME} ${sources})
 
+find_package(GUROBI REQUIRED)
+
+if (NOT GUROBI_CXX_LIBRARY)
+    message(FATAL_ERROR "GUROBI C++ library not found (GUROBI_CXX_LIBRARY).")
+endif ()
+
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE WITH_GUROBI=1)
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${GUROBI_INCLUDE_DIRS})
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE ${GUROBI_CXX_LIBRARY} ${GUROBI_LIBRARY})
+
 if (${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_CURRENT_SOURCE_DIR})
     include(FeatureSummary)
     feature_summary(WHAT ALL)
