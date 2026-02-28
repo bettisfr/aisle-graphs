@@ -902,7 +902,7 @@ solution algorithms::heuristic_partial_row_impl(const int budget, const int comp
     solution best_s1;
     best_s1.algorithm_key = "hpr";
     bool has_s1 = false;
-    const int max_delta = min(80, budget);
+    const int max_delta = min(budget, 2 * num_internal_cols);
     for (int delta = 0; delta <= max_delta; delta += 2) {
         const int anchor_budget = budget - delta;
         if (anchor_budget < 0) {
@@ -923,10 +923,13 @@ solution algorithms::heuristic_partial_row_impl(const int budget, const int comp
 
     // S2 (paper-aligned): best among S_L, S_R, and S' built from combined left/right partial picks.
     solution s_left_budget = opt_partial_row_single_column(budget);
+    const int right_shift_cost = 2 * (num_internal_cols + 1);
+    const int right_effective_budget = budget - right_shift_cost; // paper-style SR budget: B - 2(n+1)
     solution s_right_budget = opt_partial_row_single_column_right_public(budget);
     solution s2 = s_left_budget;
     s2.algorithm_key = "hpr";
     s2.notes.push_back("S2 initialized with S_L");
+    s2.notes.push_back("S2 right-side effective budget = B - 2(n+1) = " + to_string(max(0, right_effective_budget)));
     if (s_right_budget.reward > s2.reward ||
         (s_right_budget.reward == s2.reward && s_right_budget.cost < s2.cost)) {
         s2 = s_right_budget;
@@ -959,20 +962,20 @@ solution algorithms::heuristic_partial_row_impl(const int budget, const int comp
         return rows;
     };
 
-    // Multi-candidate S2': try several thresholds and row-order criteria, keep best feasible S'.
+    // S2' (cleaned version): for each threshold, use a single reward ordering and even prefixes.
     auto try_update_s2_prime = [&](const vector<int> &rows_in, const int threshold, const string &variant_tag) {
         if (rows_in.size() < 2) {
             return;
         }
 
-        const int max_rows_considered = min(static_cast<int>(rows_in.size()), 16);
+        const int max_rows_considered = static_cast<int>(rows_in.size());
         for (int take = 2; take <= max_rows_considered; take += 2) {
             vector<int> rows(rows_in.begin(), rows_in.begin() + take);
 
             solution s_prime = build_full_solution_from_rows(
                 rows,
                 "S2 prime full rows (threshold=" + to_string(threshold) +
-                ", variant=" + variant_tag +
+                ", ordering=" + variant_tag +
                 ", take=" + to_string(take) + ")"
             );
             if (s_prime.cost > budget) {
@@ -982,7 +985,7 @@ solution algorithms::heuristic_partial_row_impl(const int budget, const int comp
             s_prime.algorithm_key = "hpr";
             if (better(s_prime, s2)) {
                 s2 = s_prime;
-                s2.notes.push_back("S2 selected S' (" + variant_tag + ", take=" + to_string(take) + ")");
+                s2.notes.push_back("S2 selected S' (ordering=" + variant_tag + ", take=" + to_string(take) + ")");
             }
         }
     };
@@ -1003,44 +1006,11 @@ solution algorithms::heuristic_partial_row_impl(const int budget, const int comp
                  return row_sum[a] > row_sum[b];
              });
         try_update_s2_prime(by_reward, threshold, "reward");
-
-        vector<int> by_depth = cand;
-        sort(by_depth.begin(), by_depth.end(),
-             [](const int a, const int b) { return a < b; });
-        try_update_s2_prime(by_depth, threshold, "depth");
-
-        vector<int> by_density = cand;
-        sort(by_density.begin(), by_density.end(),
-             [&](const int a, const int b) {
-                 int left_a = (a < static_cast<int>(s_left_budget.selected_columns_per_row.size()))
-                                  ? s_left_budget.selected_columns_per_row[a]
-                                  : 0;
-                 int right_a = (a < static_cast<int>(s_right_budget.selected_columns_per_row.size()))
-                                   ? s_right_budget.selected_columns_per_row[a]
-                                   : 0;
-                 int left_b = (b < static_cast<int>(s_left_budget.selected_columns_per_row.size()))
-                                  ? s_left_budget.selected_columns_per_row[b]
-                                  : 0;
-                 int right_b = (b < static_cast<int>(s_right_budget.selected_columns_per_row.size()))
-                                   ? s_right_budget.selected_columns_per_row[b]
-                                   : 0;
-                 const int sum_a = left_a + right_a;
-                 const int sum_b = left_b + right_b;
-                 if (sum_a == sum_b) {
-                     if (fabs(row_sum[a] - row_sum[b]) <= 1e-12) {
-                         return a < b;
-                     }
-                     return row_sum[a] > row_sum[b];
-                 }
-                 return sum_a > sum_b;
-             });
-        try_update_s2_prime(by_density, threshold, "density");
     }
 
-    // S3: iterate prefixes, evaluate multiple promising row pairs, then refine with partial rows.
+    // S3 (cleaned): for each prefix 0..i, sort by reward and test even-size prefixes (2,4,6,...).
     solution s3;
     s3.algorithm_key = "hpr";
-    const int s3_pair_pool_size = 8;
     for (int i = 0; i < num_rows; ++i) {
         vector<int> prefix_rows;
         for (int r = 0; r <= i; ++r) {
@@ -1057,25 +1027,23 @@ solution algorithms::heuristic_partial_row_impl(const int budget, const int comp
             continue;
         }
 
-        const int pool_size = min(static_cast<int>(prefix_rows.size()), s3_pair_pool_size);
+        const int rows_cap = static_cast<int>(prefix_rows.size());
         solution best_for_i;
         best_for_i.algorithm_key = "hpr";
         bool found_for_i = false;
-        for (int a = 0; a < pool_size; ++a) {
-            for (int b = a + 1; b < pool_size; ++b) {
-                vector<int> chosen = {prefix_rows[a], prefix_rows[b]};
-                solution cand = build_full_solution_from_rows(chosen, "S3 base (row-pair in top pool up to i)");
-                if (cand.cost > budget) {
-                    continue;
-                }
-                cand = augment_with_residual_partials(cand, "S3 + residual partials");
-                cand.algorithm_key = "hpr";
-                if (!found_for_i ||
-                    cand.reward > best_for_i.reward ||
-                    (cand.reward == best_for_i.reward && cand.cost < best_for_i.cost)) {
-                    best_for_i = cand;
-                    found_for_i = true;
-                }
+        for (int take = 2; take <= rows_cap; take += 2) {
+            vector<int> chosen(prefix_rows.begin(), prefix_rows.begin() + take);
+            solution cand = build_full_solution_from_rows(chosen, "S3 base (top-reward even prefix)");
+            if (cand.cost > budget) {
+                continue;
+            }
+            cand = augment_with_residual_partials(cand, "S3 + residual partials");
+            cand.algorithm_key = "hpr";
+            if (!found_for_i ||
+                cand.reward > best_for_i.reward ||
+                (cand.reward == best_for_i.reward && cand.cost < best_for_i.cost)) {
+                best_for_i = cand;
+                found_for_i = true;
             }
         }
         if (!found_for_i) {
