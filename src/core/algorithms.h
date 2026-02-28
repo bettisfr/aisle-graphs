@@ -18,8 +18,9 @@ private:
                                       bool disable_first_row_partial) const;
     solution opt_partial_row_single_column_right(int budget) const;
     solution opt_partial_row_single_column_right_public(int budget) const; // internal rooted wrapper for right-side OPRSC
-    solution heuristic_partial_row_impl(int budget, int component_mode) const; // 0=all,1=S1,2=S3
+    solution heuristic_partial_row_impl(int budget, int component_mode) const; // 0=all,1=S1,2=S2,3=S3
     solution heuristic_partial_row_s1(int budget) const;                // internal debug helper (S1)
+    solution heuristic_partial_row_s2(int budget) const;                // internal debug helper (S2)
     solution heuristic_partial_row_s3(int budget) const;                // internal debug helper (S3)
 
 public:

@@ -14,6 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 CPP_BIN = REPO_ROOT / "cmake-build-release" / "aisle-graphs"
 
 ALGORITHMS = ["opr", "apr", "hpr", "gpr"]
+OPR_MAX_BUDGET = 40
 COLORS = {
     "opr": "#1f77b4",
     "apr": "#ff7f0e",
@@ -100,9 +101,11 @@ def parse_args():
     p.add_argument("--instances", type=int, default=33, help="Number of random instances")
     p.add_argument("--seed-base", type=int, default=7000, help="Base seed (seed_base + instance_idx)")
     p.add_argument("--budget-step", type=int, default=1, help="Budget step for sweep")
+    p.add_argument("--min-budget", type=int, default=0, help="Minimum budget for sweep")
     p.add_argument("--max-budget", type=int, default=-1, help="Optional max budget override (<= computed Bmax)")
     p.add_argument("--out", type=str, default="test/output/evaluate_pr.pdf", help="Output PDF path")
     p.add_argument("--grb-license-file", type=str, default="", help="Optional GRB_LICENSE_FILE value")
+    p.add_argument("--disable-opr", action="store_true", help="Do not execute/plot OPR")
     return p.parse_args()
 
 
@@ -113,6 +116,8 @@ def main() -> int:
         raise RuntimeError(f"C++ binary not found: {CPP_BIN}")
     if args.budget_step <= 0:
         raise ValueError("--budget-step must be > 0")
+    if args.min_budget < 0:
+        raise ValueError("--min-budget must be >= 0")
 
     out_path = Path(args.out)
     if not out_path.parent.exists():
@@ -123,50 +128,59 @@ def main() -> int:
     env = os.environ.copy()
     if args.grb_license_file:
         env["GRB_LICENSE_FILE"] = args.grb_license_file
+    active_algorithms = [alg for alg in ALGORITHMS if not (args.disable_opr and alg == "opr")]
 
     # Paper upper bound using internal columns n convention.
     b_max = (args.cols + 1) * args.rows + 2 * (args.rows - 1)
     if args.max_budget >= 0:
         b_max = min(b_max, args.max_budget)
-    budgets = [b for b in range(0, b_max + 1, args.budget_step) if b % 2 == 0]
+    budgets = [b for b in range(args.min_budget, b_max + 1, args.budget_step) if b % 2 == 0]
     if not budgets:
         raise ValueError("No even budgets generated: adjust --budget-step/--max-budget")
 
-    values = {alg: [[] for _ in budgets] for alg in ALGORITHMS}
+    values = {alg: [[] for _ in budgets] for alg in active_algorithms}
 
     print(
         f"Evaluating PR algorithms on {args.instances} random instances "
         f"({args.rows}x{args.cols} internal, graph cols={args.cols + 2})"
     )
-    print(f"Budget sweep: 0..{b_max} step {args.budget_step} ({len(budgets)} values)")
+    print(f"Budget sweep: {budgets[0]}..{budgets[-1]} step {args.budget_step} ({len(budgets)} values)")
 
     for inst_idx in range(args.instances):
         seed = args.seed_base + inst_idx
         print(f"Instance {inst_idx + 1}/{args.instances} (seed={seed})")
         for bi, budget in enumerate(budgets):
             by_alg = {}
-            for alg in ALGORITHMS:
+            for alg in active_algorithms:
+                if alg == "opr" and budget > OPR_MAX_BUDGET:
+                    continue
                 by_alg[alg] = run_cpp_alg(alg, budget, args.rows, args.cols, seed, env)
 
-            opr_reward = by_alg["opr"]["reward"]
-            # OPR is the exact internal baseline; enforce dominance only against internal approximations/heuristics.
-            for alg in ["apr", "hpr", "gpr"]:
-                if by_alg[alg]["reward"] > opr_reward:
-                    raise RuntimeError(
-                        "Ordering violated: "
-                        f"reward(opr)={opr_reward} < reward({alg})={by_alg[alg]['reward']} "
-                        f"(seed={seed}, budget={budget})"
-                    )
+            if "opr" in by_alg:
+                opr_reward = by_alg["opr"]["reward"]
+                # OPR is the exact internal baseline; enforce dominance only when OPR is executed.
+                for alg in ["apr", "hpr", "gpr"]:
+                    if by_alg[alg]["reward"] > opr_reward:
+                        raise RuntimeError(
+                            "Ordering violated: "
+                            f"reward(opr)={opr_reward} < reward({alg})={by_alg[alg]['reward']} "
+                            f"(seed={seed}, budget={budget})"
+                        )
 
-            for alg in ALGORITHMS:
-                values[alg][bi].append(by_alg[alg]["reward"])
+            for alg in active_algorithms:
+                if alg in by_alg:
+                    values[alg][bi].append(by_alg[alg]["reward"])
 
     means = {}
     stds = {}
-    for alg in ALGORITHMS:
+    for alg in active_algorithms:
         alg_means = []
         alg_stds = []
         for arr in values[alg]:
+            if not arr:
+                alg_means.append(float("nan"))
+                alg_stds.append(float("nan"))
+                continue
             mu = sum(arr) / len(arr)
             if len(arr) <= 1:
                 sigma = 0.0
@@ -179,7 +193,7 @@ def main() -> int:
         stds[alg] = alg_stds
 
     plt.figure(figsize=(9, 5.2))
-    for alg in ALGORITHMS:
+    for alg in active_algorithms:
         mean = means[alg]
         std = stds[alg]
         lower = [m - s for m, s in zip(mean, std)]
