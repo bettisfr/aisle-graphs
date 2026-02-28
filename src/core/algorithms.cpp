@@ -959,49 +959,82 @@ solution algorithms::heuristic_partial_row_impl(const int budget, const int comp
         return rows;
     };
 
-    vector<int> full_rows_candidate;
-    int selected_threshold = -1;
-    for (int d = 2; d <= num_internal_cols && full_rows_candidate.size() < 2; ++d) {
+    // Multi-candidate S2': try several thresholds and row-order criteria, keep best feasible S'.
+    auto try_update_s2_prime = [&](const vector<int> &rows_in, const int threshold, const string &variant_tag) {
+        if (rows_in.size() < 2) {
+            return;
+        }
+        vector<int> rows = rows_in;
+        if (rows.size() % 2 == 1) {
+            rows.pop_back();
+        }
+        if (rows.empty()) {
+            return;
+        }
+
+        solution s_prime = build_full_solution_from_rows(
+            rows,
+            "S2 prime full rows (threshold=" + to_string(threshold) + ", variant=" + variant_tag + ")"
+        );
+        if (s_prime.cost > budget) {
+            return;
+        }
+        s_prime = augment_with_residual_partials(s_prime, "S2 prime + residual partials");
+        s_prime.algorithm_key = "hpr";
+        if (better(s_prime, s2)) {
+            s2 = s_prime;
+            s2.notes.push_back("S2 selected S' (" + variant_tag + ")");
+        }
+    };
+
+    for (int d = 2; d <= num_internal_cols; ++d) {
         const int threshold = (num_internal_cols + d - 1) / d; // ceil(n/d)
         vector<int> cand = collect_rows_for_threshold(threshold);
-        if (d == 2) {
-            // First attempt strictly follows n/2 criterion (rounded up).
-            full_rows_candidate = move(cand);
-            selected_threshold = threshold;
-            if (full_rows_candidate.size() >= 2) {
-                break;
-            }
+        if (cand.size() < 2) {
             continue;
         }
-        if (cand.size() >= 2) {
-            full_rows_candidate = move(cand);
-            selected_threshold = threshold;
-            break;
-        }
-    }
 
-    if (!full_rows_candidate.empty()) {
-        sort(full_rows_candidate.begin(), full_rows_candidate.end(),
-             [&](int a, int b) { return row_sum[a] > row_sum[b]; });
-        if (full_rows_candidate.size() % 2 == 1) {
-            // Enforce even number of full rows, dropping the least profitable one.
-            full_rows_candidate.pop_back();
-        }
-        if (!full_rows_candidate.empty()) {
-            solution s_prime = build_full_solution_from_rows(
-                full_rows_candidate,
-                "S2 prime full rows (threshold=" + to_string(selected_threshold) + ")"
-            );
-            if (s_prime.cost <= budget) {
-                s_prime = augment_with_residual_partials(s_prime, "S2 prime + residual partials");
-                s_prime.algorithm_key = "hpr";
-                if (s_prime.reward > s2.reward ||
-                    (s_prime.reward == s2.reward && s_prime.cost < s2.cost)) {
-                    s2 = s_prime;
-                    s2.notes.push_back("S2 selected S'");
-                }
-            }
-        }
+        vector<int> by_reward = cand;
+        sort(by_reward.begin(), by_reward.end(),
+             [&](const int a, const int b) {
+                 if (fabs(row_sum[a] - row_sum[b]) <= 1e-12) {
+                     return a < b;
+                 }
+                 return row_sum[a] > row_sum[b];
+             });
+        try_update_s2_prime(by_reward, threshold, "reward");
+
+        vector<int> by_depth = cand;
+        sort(by_depth.begin(), by_depth.end(),
+             [](const int a, const int b) { return a < b; });
+        try_update_s2_prime(by_depth, threshold, "depth");
+
+        vector<int> by_density = cand;
+        sort(by_density.begin(), by_density.end(),
+             [&](const int a, const int b) {
+                 int left_a = (a < static_cast<int>(s_left_budget.selected_columns_per_row.size()))
+                                  ? s_left_budget.selected_columns_per_row[a]
+                                  : 0;
+                 int right_a = (a < static_cast<int>(s_right_budget.selected_columns_per_row.size()))
+                                   ? s_right_budget.selected_columns_per_row[a]
+                                   : 0;
+                 int left_b = (b < static_cast<int>(s_left_budget.selected_columns_per_row.size()))
+                                  ? s_left_budget.selected_columns_per_row[b]
+                                  : 0;
+                 int right_b = (b < static_cast<int>(s_right_budget.selected_columns_per_row.size()))
+                                   ? s_right_budget.selected_columns_per_row[b]
+                                   : 0;
+                 const int sum_a = left_a + right_a;
+                 const int sum_b = left_b + right_b;
+                 if (sum_a == sum_b) {
+                     if (fabs(row_sum[a] - row_sum[b]) <= 1e-12) {
+                         return a < b;
+                     }
+                     return row_sum[a] > row_sum[b];
+                 }
+                 return sum_a > sum_b;
+             });
+        try_update_s2_prime(by_density, threshold, "density");
     }
 
     // S3: iterate prefixes, evaluate multiple promising row pairs, then refine with partial rows.
