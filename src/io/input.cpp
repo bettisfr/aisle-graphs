@@ -22,6 +22,7 @@ string algorithm_to_string(const int algorithm) {
         case 5: return "oprsc";
         case 6: return "gprsc";
         case 7: return "gpr";
+        case 8: return "opr-dp";
         default: return "unknown";
     }
 }
@@ -35,6 +36,7 @@ int algorithm_from_string(const string &name) {
     if (name == "oprsc") return 5;
     if (name == "gprsc") return 6;
     if (name == "gpr") return 7;
+    if (name == "opr-dp" || name == "oprdp") return 8;
     throw invalid_argument("Unknown algorithm name: " + name);
 }
 
@@ -143,7 +145,7 @@ bool check_parameters(const input &cfg) {
 
     if (cfg.rows <= 0) cerr << "Error: rows must be > 0" << endl, error = true;
     if (cfg.cols <= 0) cerr << "Error: cols must be > 0" << endl, error = true;
-    if (cfg.algorithm < 0 || cfg.algorithm > 7) cerr << "Error: algorithm must be in [0, 7]" << endl, error = true;
+    if (cfg.algorithm < 0 || cfg.algorithm > 8) cerr << "Error: algorithm must be in [0, 8]" << endl, error = true;
     if (cfg.min_reward > cfg.max_reward) cerr << "Error: min_reward > max_reward" << endl, error = true;
     if (cfg.budget < 0) cerr << "Error: budget must be >= 0" << endl, error = true;
     if (cfg.budget_points <= 0) cerr << "Error: budget_points must be > 0" << endl, error = true;

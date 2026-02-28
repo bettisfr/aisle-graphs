@@ -19,6 +19,7 @@ struct input {
     // 5 -> oprsc
     // 6 -> gprsc
     // 7 -> gpr
+    // 8 -> opr-dp
     int algorithm = 0;
     int budget = 0;
 

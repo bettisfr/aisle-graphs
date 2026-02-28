@@ -157,6 +157,7 @@ algorithms::algorithms(const deployment &dep) : dep(dep) {
         &algorithms::opt_partial_row_single_column, // 5 -> oprsc
         &algorithms::greedy_partial_row_single_column, // 6 -> gprsc
         &algorithms::greedy_partial_row,            // 7 -> gpr
+        &algorithms::opt_partial_row_dp,            // 8 -> opr-dp
     };
 }
 
@@ -189,7 +190,7 @@ solution algorithms::run_experiment(const int algorithm, const int budget) {
             throw runtime_error("Invalid partial-row single-column solution: " + reason);
         }
     }
-    if (algorithm == 1 || algorithm == 3 || algorithm == 4 || algorithm == 7) { // opr, hpr, apr, gpr
+    if (algorithm == 1 || algorithm == 3 || algorithm == 4 || algorithm == 7 || algorithm == 8) { // opr, hpr, apr, gpr, opr-dp
         string reason;
         if (!util::is_partial_row_solution_feasible(out, dep.rows(), dep.cols(), budget, &reason)) {
             throw runtime_error("Invalid aisle-graph path solution: " + reason);
@@ -515,6 +516,14 @@ solution algorithms::solve_opr_ilp_gurobi(const int budget) const {
 
 solution algorithms::opt_partial_row(const int budget) const {
     return solve_opr_ilp_gurobi(budget);
+}
+
+solution algorithms::opt_partial_row_dp(const int budget) const {
+    solution out;
+    out.algorithm_key = "opr-dp";
+    out.cycle = {{0, 0}};
+    out.notes.push_back("TODO: implement opt_partial_row_dp");
+    return out;
 }
 
 solution algorithms::opt_partial_row_single_column(const int budget) const {

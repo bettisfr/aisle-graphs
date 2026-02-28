@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -127,7 +128,9 @@ def main() -> int:
     b_max = (args.cols + 1) * args.rows + 2 * (args.rows - 1)
     if args.max_budget >= 0:
         b_max = min(b_max, args.max_budget)
-    budgets = list(range(0, b_max + 1, args.budget_step))
+    budgets = [b for b in range(0, b_max + 1, args.budget_step) if b % 2 == 0]
+    if not budgets:
+        raise ValueError("No even budgets generated: adjust --budget-step/--max-budget")
 
     values = {alg: [[] for _ in budgets] for alg in ALGORITHMS}
 
@@ -146,6 +149,7 @@ def main() -> int:
                 by_alg[alg] = run_cpp_alg(alg, budget, args.rows, args.cols, seed, env)
 
             opr_reward = by_alg["opr"]["reward"]
+            # OPR is the exact internal baseline; enforce dominance only against internal approximations/heuristics.
             for alg in ["apr", "hpr", "gpr"]:
                 if by_alg[alg]["reward"] > opr_reward:
                     raise RuntimeError(
@@ -189,6 +193,9 @@ def main() -> int:
     )
     plt.xlabel("Budget")
     plt.ylabel("Reward (mean ± std)")
+    ax = plt.gca()
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()

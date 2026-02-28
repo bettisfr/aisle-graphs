@@ -37,6 +37,7 @@ public:
 
     // partial row
     solution opt_partial_row(int budget) const;                         // opr
+    solution opt_partial_row_dp(int budget) const;                      // opr-dp
     solution apx_partial_row(int budget) const;                         // apr
     solution heuristic_partial_row(int budget) const;                   // hpr
     solution greedy_partial_row(int budget) const;                      // gpr
