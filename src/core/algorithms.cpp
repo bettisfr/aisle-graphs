@@ -964,26 +964,26 @@ solution algorithms::heuristic_partial_row_impl(const int budget, const int comp
         if (rows_in.size() < 2) {
             return;
         }
-        vector<int> rows = rows_in;
-        if (rows.size() % 2 == 1) {
-            rows.pop_back();
-        }
-        if (rows.empty()) {
-            return;
-        }
 
-        solution s_prime = build_full_solution_from_rows(
-            rows,
-            "S2 prime full rows (threshold=" + to_string(threshold) + ", variant=" + variant_tag + ")"
-        );
-        if (s_prime.cost > budget) {
-            return;
-        }
-        s_prime = augment_with_residual_partials(s_prime, "S2 prime + residual partials");
-        s_prime.algorithm_key = "hpr";
-        if (better(s_prime, s2)) {
-            s2 = s_prime;
-            s2.notes.push_back("S2 selected S' (" + variant_tag + ")");
+        const int max_rows_considered = min(static_cast<int>(rows_in.size()), 16);
+        for (int take = 2; take <= max_rows_considered; take += 2) {
+            vector<int> rows(rows_in.begin(), rows_in.begin() + take);
+
+            solution s_prime = build_full_solution_from_rows(
+                rows,
+                "S2 prime full rows (threshold=" + to_string(threshold) +
+                ", variant=" + variant_tag +
+                ", take=" + to_string(take) + ")"
+            );
+            if (s_prime.cost > budget) {
+                continue;
+            }
+            s_prime = augment_with_residual_partials(s_prime, "S2 prime + residual partials");
+            s_prime.algorithm_key = "hpr";
+            if (better(s_prime, s2)) {
+                s2 = s_prime;
+                s2.notes.push_back("S2 selected S' (" + variant_tag + ", take=" + to_string(take) + ")");
+            }
         }
     };
 
